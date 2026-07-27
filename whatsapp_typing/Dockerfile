@@ -1,7 +1,11 @@
 # Home Assistant add-on image.
-# BUILD_FROM is injected by the Supervisor builder; the default keeps a plain
-# `docker build .` working for testing (see Dockerfile.standalone for compose).
-ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest
+#
+# BUILD_FROM is injected by the Supervisor from build.yaml, which picks the base
+# image matching the device architecture. No default on purpose: a hardcoded one
+# would silently build for the wrong arch. To build this by hand, pass it:
+#   docker build --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:latest .
+# For plain docker/compose use Dockerfile.standalone instead.
+ARG BUILD_FROM
 
 FROM golang:1.25-alpine AS builder
 WORKDIR /src

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- Aggiunto `build.yaml`: senza quel file il Supervisor non passa `BUILD_FROM` e la build finiva
+  sulla base image amd64 anche su dispositivi aarch64/armv7, fallendo con
+  "no match for platform in manifest"
+- Il Dockerfile non ha più un `BUILD_FROM` di default: meglio fallire subito che costruire
+  per l'architettura sbagliata
+
 ## 1.0.0
 
 Prima versione.

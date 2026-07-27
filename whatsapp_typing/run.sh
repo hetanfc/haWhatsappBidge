@@ -1,0 +1,51 @@
+#!/usr/bin/with-contenv bashio
+# Maps the add-on options onto the environment variables the binary reads.
+set -e
+
+export WT_PHONE="$(bashio::config 'phone_number')"
+export WT_NAME="$(bashio::config 'contact_name')"
+export WT_COMPOSING_TIMEOUT="$(bashio::config 'composing_timeout')"
+export WT_OFF_DELAY="$(bashio::config 'off_delay')"
+export WT_MARK_ONLINE="$(bashio::config 'mark_online')"
+export WT_LOG_LEVEL="$(bashio::config 'log_level')"
+export WT_PUBLISHER="$(bashio::config 'publisher')"
+export WT_DB_PATH="/data/whatsapp.db"
+
+if bashio::config.has_value 'pair_phone'; then
+    export WT_PAIR_PHONE="$(bashio::config 'pair_phone')"
+fi
+if bashio::config.has_value 'jid_override'; then
+    export WT_JID="$(bashio::config 'jid_override')"
+fi
+if bashio::config.has_value 'push_name'; then
+    export WT_PUSH_NAME="$(bashio::config 'push_name')"
+fi
+
+if [ "${WT_PUBLISHER}" = "ha" ]; then
+    # Talk to the core through the Supervisor proxy, no token to configure.
+    export HA_URL="http://supervisor/core"
+    export HA_TOKEN="${SUPERVISOR_TOKEN}"
+    bashio::log.info "Pubblicazione via API Home Assistant (nessun broker MQTT)"
+elif bashio::config.has_value 'mqtt_host'; then
+    export MQTT_HOST="$(bashio::config 'mqtt_host')"
+    export MQTT_PORT="$(bashio::config 'mqtt_port')"
+    export MQTT_USER="$(bashio::config 'mqtt_user')"
+    export MQTT_PASSWORD="$(bashio::config 'mqtt_password')"
+    export MQTT_TLS="$(bashio::config 'mqtt_tls')"
+    bashio::log.info "Broker MQTT configurato a mano: ${MQTT_HOST}:${MQTT_PORT}"
+elif bashio::services.available "mqtt"; then
+    export MQTT_HOST="$(bashio::services mqtt 'host')"
+    export MQTT_PORT="$(bashio::services mqtt 'port')"
+    export MQTT_USER="$(bashio::services mqtt 'username')"
+    export MQTT_PASSWORD="$(bashio::services mqtt 'password')"
+    export MQTT_TLS="$(bashio::services mqtt 'ssl')"
+    bashio::log.info "Broker MQTT preso dal Supervisor: ${MQTT_HOST}:${MQTT_PORT}"
+else
+    bashio::exit.nok "Nessun broker MQTT trovato: installa il add-on Mosquitto, compila mqtt_host, oppure metti publisher: ha"
+fi
+
+if bashio::var.is_empty "${WT_PHONE}" && bashio::var.is_empty "${WT_JID:-}"; then
+    bashio::exit.nok "Imposta phone_number (numero internazionale senza + e senza spazi, es. 393331234567)"
+fi
+
+exec /usr/bin/whatsapp-typing

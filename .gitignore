@@ -1,0 +1,6 @@
+.env
+.claude/settings.local.json
+data/
+*.db
+*.db-shm
+*.db-wal

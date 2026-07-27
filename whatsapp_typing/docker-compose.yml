@@ -1,0 +1,25 @@
+services:
+  whatsapp-typing:
+    build:
+      context: .
+      dockerfile: Dockerfile.standalone
+    container_name: whatsapp-typing
+    restart: unless-stopped
+    # Serve un TTY al primo avvio, per vedere il QR code nei log
+    tty: true
+    environment:
+      WT_PHONE: "${WT_PHONE}"              # numero del contatto, solo cifre, con prefisso (39...)
+      WT_PAIR_PHONE: "${WT_PAIR_PHONE}"    # il TUO numero: accoppia con codice invece del QR
+      WT_NAME: "${WT_NAME:-Contatto}"
+      WT_COMPOSING_TIMEOUT: "${WT_COMPOSING_TIMEOUT:-20}"
+      WT_OFF_DELAY: "${WT_OFF_DELAY:-3}"
+      WT_MARK_ONLINE: "${WT_MARK_ONLINE:-true}"
+      WT_LOG_LEVEL: "${WT_LOG_LEVEL:-info}"
+      WT_PUBLISHER: "mqtt"
+      MQTT_HOST: "${MQTT_HOST}"
+      MQTT_PORT: "${MQTT_PORT:-1883}"
+      MQTT_USER: "${MQTT_USER}"
+      MQTT_PASSWORD: "${MQTT_PASSWORD}"
+      TZ: "${TZ:-Europe/Rome}"
+    volumes:
+      - ./data:/data

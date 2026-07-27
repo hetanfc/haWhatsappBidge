@@ -1,0 +1,318 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/mdp/qrterminal/v3"
+	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/store"
+	"go.mau.fi/whatsmeow/store/sqlstore"
+	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
+	waLog "go.mau.fi/whatsmeow/util/log"
+	"google.golang.org/protobuf/proto"
+	_ "modernc.org/sqlite"
+)
+
+type WhatsApp struct {
+	cfg    Config
+	tr     *Tracker
+	log    *slog.Logger
+	cli    *whatsmeow.Client
+	db     *sql.DB
+	target types.JID // phone-number JID of the contact
+	lid    types.JID // LID alias of the same contact, when resolvable
+	kick   chan struct{}
+	seen   map[string]bool // other chats already logged, to keep the log quiet
+}
+
+func NewWhatsApp(ctx context.Context, cfg Config, tr *Tracker, log *slog.Logger) (*WhatsApp, error) {
+	if dir := filepath.Dir(cfg.DBPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create db dir: %w", err)
+		}
+	}
+
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)", cfg.DBPath)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open session store: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+
+	waLogger := waLog.Stdout("whatsmeow", waLevel(cfg.LogLevel), true)
+	container := sqlstore.NewWithDB(db, "sqlite3", waLogger)
+	if err := container.Upgrade(ctx); err != nil {
+		return nil, fmt.Errorf("upgrade session store: %w", err)
+	}
+	device, err := container.GetFirstDevice(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load device: %w", err)
+	}
+
+	// How this shows up in WhatsApp > Linked devices.
+	store.DeviceProps.Os = proto.String("Home Assistant")
+
+	w := &WhatsApp{
+		cfg:  cfg,
+		tr:   tr,
+		log:  log,
+		db:   db,
+		kick: make(chan struct{}, 1),
+		seen: map[string]bool{},
+	}
+
+	if cfg.JIDOverride != "" {
+		jid, err := types.ParseJID(cfg.JIDOverride)
+		if err != nil {
+			return nil, fmt.Errorf("parse WT_JID: %w", err)
+		}
+		w.target = jid
+	} else {
+		w.target = types.NewJID(cfg.Phone, types.DefaultUserServer)
+	}
+
+	w.cli = whatsmeow.NewClient(device, waLogger)
+	w.cli.AddEventHandler(w.handleEvent)
+	return w, nil
+}
+
+func (w *WhatsApp) Start(ctx context.Context) error {
+	go w.maintain(ctx)
+
+	needsLogin := w.cli.Store.ID == nil
+	if needsLogin {
+		qrChan, err := w.cli.GetQRChannel(ctx)
+		if err != nil {
+			return fmt.Errorf("qr channel: %w", err)
+		}
+		go func() {
+			for evt := range qrChan {
+				switch evt.Event {
+				case "code":
+					if w.cfg.PairPhone != "" {
+						// Pairing by code: the QR would only add noise.
+						continue
+					}
+					fmt.Println()
+					fmt.Println("=== Inquadra questo QR con WhatsApp > Dispositivi collegati ===")
+					qrterminal.GenerateWithConfig(evt.Code, qrterminal.Config{
+						Level:     qrterminal.L,
+						Writer:    os.Stdout,
+						BlackChar: qrterminal.BLACK,
+						WhiteChar: qrterminal.WHITE,
+						QuietZone: 1,
+					})
+					fmt.Printf("\nSe il QR sopra non e' leggibile, genera l'immagine da questo testo:\n%s\n\n", evt.Code)
+				case "success":
+					w.log.Info("device linked to whatsapp")
+				case "timeout":
+					if w.cfg.PairPhone != "" {
+						w.log.Warn("pairing code expired, restart the add-on to get a new one")
+					} else {
+						w.log.Warn("qr code expired, a new one will be generated")
+					}
+				default:
+					w.log.Debug("qr event", "event", evt.Event)
+				}
+			}
+		}()
+	}
+
+	if err := w.cli.Connect(); err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+
+	// Pairing by code: no QR to scan, you type the code into the phone.
+	if needsLogin && w.cfg.PairPhone != "" {
+		code, err := w.cli.PairPhone(ctx, w.cfg.PairPhone, true, whatsmeow.PairClientChrome, "Home Assistant (Linux)")
+		if err != nil {
+			return fmt.Errorf("pair phone: %w", err)
+		}
+		fmt.Println()
+		fmt.Println("=== ACCOPPIAMENTO WHATSAPP ===")
+		fmt.Println("Sul telefono: WhatsApp > Dispositivi collegati > Collega un dispositivo >")
+		fmt.Println("\"Collega con numero di telefono\", poi digita questo codice:")
+		fmt.Printf("\n        %s\n\n", code)
+		fmt.Println("Il codice scade dopo pochi minuti: se non fai in tempo, riavvia l'add-on.")
+	}
+
+	w.log.Info("whatsapp client started", "target", w.target.String())
+	return nil
+}
+
+func (w *WhatsApp) Close() {
+	w.tr.SetConnected(false)
+	w.cli.Disconnect()
+	_ = w.db.Close()
+}
+
+func (w *WhatsApp) handleEvent(rawEvt any) {
+	switch evt := rawEvt.(type) {
+	case *events.Connected:
+		w.log.Info("connected to whatsapp")
+		w.tr.SetConnected(true)
+		w.poke()
+
+	case *events.PushNameSetting:
+		w.poke()
+
+	case *events.Disconnected:
+		w.log.Warn("disconnected from whatsapp, reconnecting")
+		w.tr.SetConnected(false)
+
+	case *events.StreamReplaced:
+		w.log.Error("stream replaced: another client took over this session")
+		w.tr.SetConnected(false)
+
+	case *events.LoggedOut:
+		w.log.Error("logged out of whatsapp, delete the session db and scan the QR again", "reason", evt.Reason.String())
+		w.tr.SetConnected(false)
+
+	case *events.ChatPresence:
+		w.onChatPresence(evt)
+
+	case *events.Message:
+		if evt.Info.IsFromMe || !w.matches(evt.Info.Chat) {
+			return
+		}
+		// She hit send: whatever typing session was open is over now.
+		w.tr.Send(Event{Kind: EvMessage, At: time.Now()})
+	}
+}
+
+func (w *WhatsApp) onChatPresence(evt *events.ChatPresence) {
+	chat := evt.MessageSource.Chat
+	if !w.matches(chat) {
+		// Logged once per chat: this is how you find the right JID when the
+		// contact is addressed over @lid instead of the phone number.
+		if !w.seen[chat.String()] {
+			w.seen[chat.String()] = true
+			w.log.Info("chat presence from another chat (ignored)", "jid", chat.String(), "state", string(evt.State))
+		}
+		return
+	}
+
+	media := "text"
+	if evt.Media == types.ChatPresenceMediaAudio {
+		media = "audio"
+	}
+	w.log.Debug("chat presence", "state", string(evt.State), "media", media)
+
+	switch evt.State {
+	case types.ChatPresenceComposing:
+		w.tr.Send(Event{Kind: EvComposing, Media: media, At: time.Now()})
+	case types.ChatPresencePaused:
+		w.tr.Send(Event{Kind: EvPaused, At: time.Now()})
+	}
+}
+
+func (w *WhatsApp) matches(jid types.JID) bool {
+	if jid.IsEmpty() {
+		return false
+	}
+	if jid.User == w.target.User {
+		return true
+	}
+	if !w.lid.IsEmpty() && jid.User == w.lid.User {
+		return true
+	}
+	return false
+}
+
+func (w *WhatsApp) poke() {
+	select {
+	case w.kick <- struct{}{}:
+	default:
+	}
+}
+
+// maintain keeps the presence subscription alive. WhatsApp only pushes presence
+// (including typing) to clients that declared themselves available, and the
+// subscription itself expires, so both are refreshed periodically.
+func (w *WhatsApp) maintain(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.kick:
+			// Give the connection a moment to finish the initial handshake.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+			}
+		case <-ticker.C:
+		}
+
+		if !w.cli.IsConnected() || !w.cli.IsLoggedIn() {
+			continue
+		}
+		w.ensurePushName(ctx)
+		if w.cfg.MarkOnline {
+			if err := w.cli.SendPresence(ctx, types.PresenceAvailable); err != nil {
+				w.log.Warn("send presence failed", "err", err)
+			}
+		}
+		w.resolveLID(ctx)
+		if err := w.cli.SubscribePresence(ctx, w.target); err != nil {
+			w.log.Warn("subscribe presence failed", "jid", w.target.String(), "err", err)
+		} else {
+			w.log.Debug("presence subscription refreshed", "jid", w.target.String())
+		}
+	}
+}
+
+// ensurePushName sets a push name if WhatsApp hasn't synced ours yet: whatsmeow
+// refuses to send presence without one. We never send messages, so this name is
+// not shown to anyone.
+func (w *WhatsApp) ensurePushName(ctx context.Context) {
+	if w.cli.Store.PushName != "" {
+		return
+	}
+	w.cli.Store.PushName = w.cfg.PushName
+	if err := w.cli.Store.Save(ctx); err != nil {
+		w.log.Warn("could not save push name", "err", err)
+		return
+	}
+	w.log.Info("push name was empty, defaulted", "push_name", w.cfg.PushName)
+}
+
+// resolveLID maps the phone-number JID to its LID alias, since newer WhatsApp
+// versions deliver presence addressed to @lid.
+func (w *WhatsApp) resolveLID(ctx context.Context) {
+	if !w.lid.IsEmpty() || w.cli.Store.LIDs == nil || w.target.Server != types.DefaultUserServer {
+		return
+	}
+	lid, err := w.cli.Store.LIDs.GetLIDForPN(ctx, w.target)
+	if err != nil {
+		w.log.Debug("lid lookup failed", "err", err)
+		return
+	}
+	if !lid.IsEmpty() {
+		w.lid = lid
+		w.log.Info("resolved contact lid", "pn", w.target.String(), "lid", lid.String())
+	}
+}
+
+func waLevel(l slog.Level) string {
+	switch {
+	case l <= slog.LevelDebug:
+		return "DEBUG"
+	case l <= slog.LevelInfo:
+		return "INFO"
+	case l <= slog.LevelWarn:
+		return "WARN"
+	default:
+		return "ERROR"
+	}
+}

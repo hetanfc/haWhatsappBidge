@@ -1,0 +1,154 @@
+package main
+
+import (
+	"log/slog"
+	"testing"
+	"time"
+)
+
+type fakePublisher struct{ last State }
+
+func (f *fakePublisher) PublishState(s State) error { f.last = s; return nil }
+func (f *fakePublisher) Close()                     {}
+
+func newTestTracker() (*Tracker, *fakePublisher) {
+	cfg := Config{
+		Name:             "Contatto",
+		ComposingTimeout: 20 * time.Second,
+		OffDelay:         3 * time.Second,
+		Tick:             2 * time.Second,
+	}
+	pub := &fakePublisher{}
+	tr := NewTracker(cfg, pub, slog.New(slog.DiscardHandler))
+	tr.connected = true
+	return tr, pub
+}
+
+func TestPausedEndsSessionAfterGrace(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvComposing, Media: "text", At: t0})
+	if !tr.isTyping() {
+		t.Fatal("composing should turn the sensor on")
+	}
+	tr.handle(Event{Kind: EvComposing, At: t0.Add(10 * time.Second)})
+	tr.handle(Event{Kind: EvPaused, At: t0.Add(12 * time.Second)})
+
+	// Still on during the grace window.
+	if tr.evaluate(t0.Add(14 * time.Second)); !tr.isTyping() {
+		t.Fatal("sensor should stay on inside the grace window")
+	}
+	// Grace expired.
+	if !tr.evaluate(t0.Add(15*time.Second)) || tr.isTyping() {
+		t.Fatal("sensor should turn off once the grace window expires")
+	}
+
+	s := tr.snapshot()
+	if s.LastDuration != 12 {
+		t.Fatalf("duration should stop at the pause (12s), got %ds", s.LastDuration)
+	}
+	if s.Attributes["last_session_ended_by"] != "paused" {
+		t.Fatalf("unexpected end reason: %v", s.Attributes["last_session_ended_by"])
+	}
+}
+
+func TestShortPauseKeepsOneSession(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvComposing, At: t0})
+	tr.handle(Event{Kind: EvPaused, At: t0.Add(4 * time.Second)})
+	tr.evaluate(t0.Add(5 * time.Second)) // inside the grace window
+	tr.handle(Event{Kind: EvComposing, At: t0.Add(6 * time.Second)})
+	tr.handle(Event{Kind: EvPaused, At: t0.Add(20 * time.Second)})
+	tr.evaluate(t0.Add(25 * time.Second))
+
+	s := tr.snapshot()
+	if s.SessionsToday != 1 {
+		t.Fatalf("a pause shorter than off_delay must not split the session, got %d sessions", s.SessionsToday)
+	}
+	if s.LastDuration != 20 {
+		t.Fatalf("expected a single 20s session, got %ds", s.LastDuration)
+	}
+}
+
+func TestComposingTimeoutClosesSession(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvComposing, At: t0})
+	// No paused, no refresh: the app was killed or the network dropped.
+	if tr.evaluate(t0.Add(19 * time.Second)); !tr.isTyping() {
+		t.Fatal("sensor should stay on until the composing timeout")
+	}
+	if !tr.evaluate(t0.Add(20*time.Second)) || tr.isTyping() {
+		t.Fatal("sensor should turn off at the composing timeout")
+	}
+
+	s := tr.snapshot()
+	if s.LastDuration != 1 {
+		t.Fatalf("duration must stop at the last evidence of typing, got %ds", s.LastDuration)
+	}
+	if s.Attributes["last_session_ended_by"] != "timeout" {
+		t.Fatalf("unexpected end reason: %v", s.Attributes["last_session_ended_by"])
+	}
+}
+
+func TestIncomingMessageEndsSession(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvComposing, At: t0})
+	tr.handle(Event{Kind: EvMessage, At: t0.Add(8 * time.Second)})
+
+	if tr.isTyping() {
+		t.Fatal("an incoming message must close the typing session")
+	}
+	s := tr.snapshot()
+	if s.LastDuration != 8 {
+		t.Fatalf("expected 8s, got %ds", s.LastDuration)
+	}
+	if s.Status != "idle" {
+		t.Fatalf("expected idle, got %q", s.Status)
+	}
+}
+
+func TestAudioRecordingStatus(t *testing.T) {
+	tr, _ := newTestTracker()
+	tr.handle(Event{Kind: EvComposing, Media: "audio", At: time.Now()})
+	if s := tr.snapshot(); s.Status != "recording" {
+		t.Fatalf("expected recording, got %q", s.Status)
+	}
+}
+
+func TestDailyTotals(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	for i := range 3 {
+		start := t0.Add(time.Duration(i) * time.Minute)
+		tr.handle(Event{Kind: EvComposing, At: start})
+		tr.handle(Event{Kind: EvMessage, At: start.Add(5 * time.Second)})
+	}
+	s := tr.snapshot()
+	if s.SessionsToday != 3 || s.SecondsToday != 15 {
+		t.Fatalf("expected 3 sessions / 15s, got %d / %ds", s.SessionsToday, s.SecondsToday)
+	}
+}
+
+func TestDisconnectClosesSession(t *testing.T) {
+	tr, pub := newTestTracker()
+	tr.handle(Event{Kind: EvComposing, At: time.Now()})
+	tr.SetConnected(false)
+
+	if tr.isTyping() {
+		t.Fatal("losing the whatsapp connection must clear the typing state")
+	}
+	if pub.last.Available {
+		t.Fatal("entities must be marked unavailable while disconnected")
+	}
+	if pub.last.Status != "disconnected" {
+		t.Fatalf("expected disconnected status, got %q", pub.last.Status)
+	}
+}

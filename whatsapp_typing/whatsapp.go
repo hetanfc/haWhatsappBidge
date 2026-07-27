@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/mdp/qrterminal/v3"
@@ -30,7 +31,15 @@ type WhatsApp struct {
 	lid    types.JID // LID alias of the same contact, when resolvable
 	kick   chan struct{}
 	seen   map[string]bool // other chats already logged, to keep the log quiet
+
+	pairFailed atomic.Bool // pairing by code failed: fall back to printing QR codes
 }
+
+// WhatsApp validates the pairing display name server-side and rejects anything
+// that isn't a common "Browser (OS)" pair with a 400, so this is not cosmetic
+// and must not be replaced with a nicer name. What shows up in the phone's
+// linked-devices list is store.DeviceProps.Os, set below.
+const pairDisplayName = "Chrome (Linux)"
 
 func NewWhatsApp(ctx context.Context, cfg Config, tr *Tracker, log *slog.Logger) (*WhatsApp, error) {
 	if dir := filepath.Dir(cfg.DBPath); dir != "" && dir != "." {
@@ -87,6 +96,8 @@ func (w *WhatsApp) Start(ctx context.Context) error {
 	go w.maintain(ctx)
 
 	needsLogin := w.cli.Store.ID == nil
+	firstQR := make(chan struct{}, 1)
+
 	if needsLogin {
 		qrChan, err := w.cli.GetQRChannel(ctx)
 		if err != nil {
@@ -96,7 +107,11 @@ func (w *WhatsApp) Start(ctx context.Context) error {
 			for evt := range qrChan {
 				switch evt.Event {
 				case "code":
-					if w.cfg.PairPhone != "" {
+					select {
+					case firstQR <- struct{}{}:
+					default:
+					}
+					if w.cfg.PairPhone != "" && !w.pairFailed.Load() {
 						// Pairing by code: the QR would only add noise.
 						continue
 					}
@@ -131,16 +146,30 @@ func (w *WhatsApp) Start(ctx context.Context) error {
 
 	// Pairing by code: no QR to scan, you type the code into the phone.
 	if needsLogin && w.cfg.PairPhone != "" {
-		code, err := w.cli.PairPhone(ctx, w.cfg.PairPhone, true, whatsmeow.PairClientChrome, "Home Assistant (Linux)")
-		if err != nil {
-			return fmt.Errorf("pair phone: %w", err)
+		// The server rejects the request until the login handshake is done, so
+		// wait for the first QR event: that's the signal the socket is ready.
+		select {
+		case <-firstQR:
+		case <-ctx.Done():
+			return nil
+		case <-time.After(15 * time.Second):
+			w.log.Warn("no qr event within 15s, requesting the pairing code anyway")
 		}
-		fmt.Println()
-		fmt.Println("=== ACCOPPIAMENTO WHATSAPP ===")
-		fmt.Println("Sul telefono: WhatsApp > Dispositivi collegati > Collega un dispositivo >")
-		fmt.Println("\"Collega con numero di telefono\", poi digita questo codice:")
-		fmt.Printf("\n        %s\n\n", code)
-		fmt.Println("Il codice scade dopo pochi minuti: se non fai in tempo, riavvia l'add-on.")
+
+		code, err := w.cli.PairPhone(ctx, w.cfg.PairPhone, true, whatsmeow.PairClientChrome, pairDisplayName)
+		if err != nil {
+			// Never fatal: without a fallback you'd be left with no way to log in.
+			w.pairFailed.Store(true)
+			w.log.Error("pairing by code failed, falling back to the QR code (it shows up here within ~20s)",
+				"err", err, "pair_phone", w.cfg.PairPhone)
+		} else {
+			fmt.Println()
+			fmt.Println("=== ACCOPPIAMENTO WHATSAPP ===")
+			fmt.Println("Sul telefono: WhatsApp > Dispositivi collegati > Collega un dispositivo >")
+			fmt.Println("\"Collega con numero di telefono\", poi digita questo codice:")
+			fmt.Printf("\n        %s\n\n", code)
+			fmt.Println("Il codice scade dopo pochi minuti: se non fai in tempo, riavvia l'add-on.")
+		}
 	}
 
 	w.log.Info("whatsapp client started", "target", w.target.String())

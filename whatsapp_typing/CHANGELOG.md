@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.2
+
+- Corretto l'accoppiamento con codice: WhatsApp valida il nome del client e rifiuta con
+  `400 bad-request` tutto ciò che non è un `Browser (OS)` comune. Veniva mandato
+  "Home Assistant (Linux)", ora "Chrome (Linux)"
+- La richiesta del codice aspetta che l'handshake di login sia completo, come richiesto da
+  whatsmeow, invece di partire subito dopo la connessione
+- Se l'accoppiamento con codice fallisce l'add-on non muore più: ripiega sul QR code, che
+  compare nei log entro una ventina di secondi
+- La versione mostrata nei log e nel dispositivo MQTT è quella vera dell'add-on
+
 ## 1.0.1
 
 - Aggiunto `build.yaml`: senza quel file il Supervisor non passa `BUILD_FROM` e la build finiva

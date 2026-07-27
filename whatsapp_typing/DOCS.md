@@ -70,6 +70,8 @@ credenziali vengono presi in automatico dal Supervisor, non devi configurare nie
    ```
    Se hai lasciato `pair_phone` vuoto, trovi invece il QR code da inquadrare.
    Il codice/QR scade dopo pochi minuti: se non fai in tempo, riavvia l'add-on.
+   Se la richiesta del codice viene rifiutata da WhatsApp, l'add-on non si ferma: nei log
+   compare il QR entro una ventina di secondi e puoi accoppiare con quello.
 6. Le entità compaiono da sole in **Impostazioni → Dispositivi → MQTT → WhatsApp Contatto**.
 
 La sessione WhatsApp è salvata in `/data/whatsapp.db` dentro l'add-on: l'accoppiamento si fa

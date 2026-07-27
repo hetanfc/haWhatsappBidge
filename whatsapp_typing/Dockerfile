@@ -8,11 +8,13 @@
 ARG BUILD_FROM
 
 FROM golang:1.25-alpine AS builder
+ARG BUILD_VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/whatsapp-typing .
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X main.version=${BUILD_VERSION}" -o /out/whatsapp-typing .
 
 FROM ${BUILD_FROM}
 COPY --from=builder /out/whatsapp-typing /usr/bin/whatsapp-typing

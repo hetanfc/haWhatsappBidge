@@ -10,7 +10,9 @@ import (
 	"time"
 )
 
-const version = "1.0.0"
+// Injected at build time from the add-on version (-X main.version=...), so the
+// logs and the MQTT device info can't drift from config.yaml.
+var version = "dev"
 
 // Config is the full runtime configuration, built from environment variables.
 // The Home Assistant add-on maps its options.json onto these vars in run.sh.

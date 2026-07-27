@@ -3,7 +3,7 @@ name: WhatsApp Typing Sensor
 version: "1.0.0"
 slug: whatsapp_typing
 description: Sensore Home Assistant che segue lo stato "sta scrivendo" di un singolo contatto WhatsApp
-url: https://github.com/hetanfc/whatsapp-typing-addon
+url: https://github.com/hetanfc/haWhatsappBidge
 arch:
   - aarch64
   - amd64

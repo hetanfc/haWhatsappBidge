@@ -47,7 +47,7 @@ credenziali vengono presi in automatico dal Supervisor, non devi configurare nie
 
 1. **Impostazioni → Add-on → Add-on Store → ⋮ (in alto a destra) → Repository**, incolla:
    ```
-   https://github.com/hetanfc/whatsapp-typing-addon
+   https://github.com/hetanfc/haWhatsappBidge
    ```
    e premi **Aggiungi**. Si fa una volta sola.
 2. Chiudi, ricarica la pagina: nello store compare la sezione **Home Assistant Add-ons**

@@ -7,7 +7,7 @@ Repository di add-on per Home Assistant.
 **Impostazioni → Add-on → Add-on Store → ⋮ → Repository**, incolla questo URL e premi Aggiungi:
 
 ```
-https://github.com/hetanfc/whatsapp-typing-addon
+https://github.com/hetanfc/haWhatsappBidge
 ```
 
 ## Add-on disponibili

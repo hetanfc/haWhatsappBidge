@@ -1,7 +1,7 @@
 # WhatsApp Typing Sensor
 
-Sensore Home Assistant che segue lo stato **"sta scrivendo…"** di **un singolo contatto**, nella
-chat 1-a-1 con te. Niente online/offline, niente ultimo accesso: solo il typing.
+Sensore Home Assistant che segue l'attività di **un singolo contatto** nella chat WhatsApp
+1-a-1 con te: typing, presenza, messaggi, risposte, reazioni, modifiche, eliminazioni e spunte.
 
 Si collega a WhatsApp come **dispositivo collegato** (esattamente come WhatsApp Web) usando
 [whatsmeow](https://github.com/tulir/whatsmeow), e pubblica su Home Assistant via **MQTT discovery**.
@@ -14,12 +14,17 @@ Con `contact_name: Contatto` ottieni:
 |---|---|
 | `sensor.contatto_activity` | **il riassunto di tutto**: cosa sta succedendo adesso, con la cronologia negli attributi |
 | `binary_sensor.contatto_typing` | ON finché sta scrivendo. Porta gli attributi (media, inizio sessione, motivo di chiusura) |
+| `binary_sensor.contatto_online` | online/offline, se WhatsApp rende disponibile la presenza |
+| `sensor.contatto_last_seen` | ultimo accesso, oppure `unknown` se nascosto dalle impostazioni privacy |
+| `sensor.contatto_last_presence` | ultimo aggiornamento online/offline ricevuto |
 | `sensor.contatto_status` | `idle` / `typing` / `recording` (nota vocale) / `disconnected` |
 | `sensor.contatto_current_duration` | secondi della sessione **in corso**, aggiornato ogni 2 s |
 | `sensor.contatto_last_duration` | quanto è durata l'**ultima** sessione |
 | `sensor.contatto_last_typing` | timestamp dell'ultima volta che ha scritto |
 | `sensor.contatto_sessions_today` | quante volte ha iniziato a scrivere oggi |
 | `sensor.contatto_seconds_today` | secondi totali passati a scrivere oggi |
+| `sensor.contatto_pauses_today` | quante pause di scrittura sono state osservate oggi |
+| `sensor.contatto_restarts_today` | quante volte ha ripreso a scrivere dopo una pausa breve |
 | `sensor.contatto_last_read` | quando ha letto i tuoi messaggi (spunte blu) |
 | `sensor.contatto_last_delivered` | quando un tuo messaggio è arrivato sul suo telefono |
 | `sensor.contatto_last_played` | quando ha ascoltato un tuo vocale o guardato un videomessaggio |
@@ -28,25 +33,32 @@ Con `contact_name: Contatto` ottieni:
 | `sensor.contatto_last_played_target` | **cosa** ha riprodotto: "videomessaggio delle 21:14" |
 | `sensor.contatto_last_message` | quando ti ha scritto l'ultima volta |
 | `sensor.contatto_messages_today` | quanti messaggi ti ha mandato oggi |
+| `sensor.contatto_last_reaction` | quando ha aggiunto, cambiato o rimosso l'ultima reazione |
+| `sensor.contatto_last_reaction_emoji` | emoji corrente dell'ultima reazione (`unknown` se rimossa) |
+| `sensor.contatto_last_reaction_target` | messaggio a cui si riferiva l'ultima reazione |
+| `sensor.contatto_last_edit` | quando ha modificato l'ultimo messaggio |
+| `sensor.contatto_last_delete` | quando ha eliminato l'ultimo messaggio |
 
 L'attributo `last_message_type` dice **che tipo** era l'ultimo messaggio ricevuto: `testo`,
 `foto`, `video`, `videomessaggio`, `vocale`, `audio`, `sticker`, `documento`, `posizione`,
-`contatto`, `gif`. Il **contenuto dei messaggi non viene mai letto, registrato o pubblicato**:
-solo l'orario e il tipo.
+`contatto`, `gif`.
 
 ## Il sensore unificato: `sensor.contatto_activity`
 
-Una sola entità che racconta cosa succede, invece di guardarne tredici. Gli stati sono:
+Una sola entità che racconta cosa succede, invece di guardare tutte le entità. Gli stati includono:
 `inattivo`, `sta scrivendo`, `registra vocale`, `messaggio ricevuto (foto)`, `ha letto`,
-`ha ascoltato`, `consegnato`.
+`ha ascoltato`, `consegnato`, `online`, `offline`, reazioni, modifiche ed eliminazioni.
 
 Siccome cambia stato a ogni evento, **la cronologia te la disegna Home Assistant da sola**:
 apri la scheda Cronologia o il Registro dell'entità e leggi la giornata riga per riga.
 
 ```
 17:02  sta scrivendo
-17:03  messaggio ricevuto (foto)
-17:03  inattivo
+17:03  messaggio ricevuto (foto): "Guarda questa"
+17:04  ha reagito con ❤️ a foto delle 17:03
+17:06  ha modificato "Arrivo alle 8" in "Arrivo alle 9"
+17:07  ha eliminato "Non importa" (testo delle 17:05)
+17:08  inattivo
 17:20  ha letto
 17:41  registra vocale
 17:42  messaggio ricevuto (vocale)
@@ -72,6 +84,34 @@ L'attributo `timeline` contiene le ultime **50** voci già scritte in italiano. 
 La lista sta in memoria: un riavvio dell'add-on la azzera. La cronologia vera e propria resta
 comunque in Home Assistant, che conserva i cambi di stato per i giorni configurati nel recorder.
 
+## Reazioni, risposte, modifiche ed eliminazioni
+
+WhatsApp invia queste azioni indicando l'ID del messaggio bersaglio. L'add-on mantiene quindi
+un archivio locale della sola chat configurata, dentro lo stesso `/data/whatsapp.db` usato
+per la sessione. Esempi:
+
+```
+18:42  ha reagito con ❤️ a foto delle 18:40
+18:44  ha cambiato reazione da ❤️ a 😂 su foto delle 18:40
+18:45  ha rimosso la reazione 😂 da foto delle 18:40
+19:03  ha risposto a vocale delle 18:59: "Sì, hai ragione"
+19:10  ha modificato "Arrivo alle 8" in "Arrivo alle 9"
+19:12  ha eliminato "Non importa" (testo delle 19:11)
+```
+
+Vengono conservati:
+
+- ID, orario, direzione e tipo del messaggio;
+- testo o didascalia, se `store_message_content: true`;
+- messaggio citato, durata dei media e flag inoltrato/effimero/visualizzazione singola;
+- revisioni precedenti e istante dell'eliminazione.
+
+Foto, video, vocali e documenti **non vengono scaricati**: per un media eliminato rimangono
+tipo, ora e didascalia, non il file. Tutte le righe vengono eliminate automaticamente dopo
+`message_retention_days` (default 60). Se disattivi `store_message_content`, reazioni,
+risposte, modifiche ed eliminazioni continuano a essere rilevate, ma senza mostrare il testo
+precedente.
+
 ## Spunte: cosa vedi davvero
 
 Le ricevute di ritorno sui **tuoi** messaggi arrivano anche a questo dispositivo collegato:
@@ -94,8 +134,8 @@ tabellina dei **tuoi** messaggi inviati in quella chat per tradurli in parole:
 23:01  ha letto (3 messaggi (l'ultimo: testo di ieri alle 22:55))
 ```
 
-Della tabellina fanno parte solo **ID, orario e tipo**: il testo dei tuoi messaggi non viene
-letto né salvato da nessuna parte. Le righe più vecchie di 60 giorni vengono cancellate.
+La stessa tabella locale usata per le interazioni permette di descrivere queste ricevute.
+Le righe più vecchie del periodo configurato vengono cancellate.
 
 Le riproduzioni ripetute vengono contate: se lo stesso videomessaggio viene aperto di nuovo,
 l'evento lo dice ("3ª volta"). È il modo per capire se un contenuto è stato davvero riguardato
@@ -131,6 +171,9 @@ pochi secondi mentre digita) e `paused`. Il servizio li trasforma in sessioni co
 
 La **durata registrata si ferma sempre sull'ultima prova reale di digitazione** (l'ultimo
 `composing` o il `paused`), mai sulla fine del periodo di grazia: i numeri restano onesti.
+Gli eventi `paused` e le riprese entro la grazia vengono anche contati. Una sessione può quindi
+comparire come `sessione: 24s, 2 pause, 2 riprese`; i semplici refresh `composing` ripetuti dal
+protocollo non gonfiano il conteggio.
 
 Se noti che il sensore si spegne mentre lei sta ancora scrivendo, alza `composing_timeout` a 30.
 Se invece lampeggia troppo, alza `off_delay` a 5.
@@ -210,6 +253,8 @@ Il primo avvio mostra codice o QR nei log. Il DB della sessione finisce in `./da
 | `off_delay` | `WT_OFF_DELAY` | `3` | Grazia dopo `paused` (0 = spegni subito) |
 | `activity_sticky` | `WT_ACTIVITY_STICKY` | `30` | Quanto resta visibile un evento istantaneo su `activity` |
 | `mark_online` | `WT_MARK_ONLINE` | `true` | Vedi sotto |
+| `store_message_content` | `WT_STORE_MESSAGE_CONTENT` | `true` | Conserva testo/didascalia per mostrare modifiche ed eliminazioni |
+| `message_retention_days` | `WT_MESSAGE_RETENTION_DAYS` | `60` | Giorni di conservazione dell'archivio della chat |
 | `publisher` | `WT_PUBLISHER` | `mqtt` | `mqtt` o `ha` |
 | `jid_override` | `WT_JID` | vuoto | Via di fuga se il contatto arriva su un JID `@lid` |
 | `push_name` | `WT_PUSH_NAME` | `Home Assistant` | Solo se WhatsApp non ha ancora sincronizzato il tuo nome |
@@ -231,6 +276,10 @@ Il primo avvio mostra codice o QR nei log. Il DB della sessione finisce in `./da
 - Occupa uno dei **4 slot dispositivi collegati** del tuo account.
 - Il typing lo vedi solo se lei **ha la chat con te aperta e sta digitando**: WhatsApp non manda
   eventi per chat che non ti riguardano.
+- Online e ultimo accesso rispettano la privacy WhatsApp del contatto. Se l'ultimo accesso è
+  nascosto il sensore resta `unknown`; l'assenza di aggiornamenti non prova che sia offline.
+- L'archivio riguarda esclusivamente la chat configurata. Con `store_message_content: true`
+  contiene testo e didascalie in chiaro nel database locale dell'add-on fino alla scadenza.
 - Ovviamente registri dati sul comportamento di un'altra persona in una cronologia consultabile:
   sono le stesse informazioni che WhatsApp ti mostra già, ma conservate nel tempo. Regolati.
 
@@ -292,6 +341,7 @@ senza bisogno di WhatsApp.
 | `main.go` | avvio e spegnimento pulito |
 | `config.go` | configurazione da env var |
 | `whatsapp.go` | client whatsmeow, login, sottoscrizione presence, filtro sulla chat |
+| `archive.go` | archivio messaggi, revisioni e stato delle reazioni |
 | `tracker.go` | macchina a stati typing → sessioni |
 | `publisher.go` | definizione delle entità + publisher REST |
 | `mqtt.go` | MQTT discovery e pubblicazione stato |

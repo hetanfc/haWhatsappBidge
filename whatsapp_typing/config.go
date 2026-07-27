@@ -27,10 +27,12 @@ type Config struct {
 	Tick             time.Duration // how often the live duration is republished
 	ActivitySticky   time.Duration // how long an instant event stays on the activity sensor
 
-	MarkOnline bool
-	PushName   string
-	PairPhone  string // your own number: pair with a code instead of a QR
-	DBPath     string
+	MarkOnline          bool
+	PushName            string
+	PairPhone           string // your own number: pair with a code instead of a QR
+	DBPath              string
+	StoreMessageContent bool // needed to show deleted text and edit history
+	MessageRetention    time.Duration
 
 	Publisher       string // "mqtt" | "ha"
 	DiscoveryPrefix string
@@ -58,22 +60,24 @@ var (
 
 func LoadConfig() (Config, error) {
 	cfg := Config{
-		Phone:            strings.TrimPrefix(strings.TrimSpace(env("WT_PHONE", "")), "+"),
-		JIDOverride:      strings.TrimSpace(env("WT_JID", "")),
-		Name:             env("WT_NAME", "Contatto"),
-		ComposingTimeout: envDur("WT_COMPOSING_TIMEOUT", 20*time.Second),
-		OffDelay:         envDur("WT_OFF_DELAY", 3*time.Second),
-		Tick:             envDur("WT_TICK", 2*time.Second),
-		ActivitySticky:   envDur("WT_ACTIVITY_STICKY", 30*time.Second),
-		MarkOnline:       envBool("WT_MARK_ONLINE", true),
-		PushName:         env("WT_PUSH_NAME", "Home Assistant"),
-		PairPhone:        strings.TrimPrefix(strings.TrimSpace(env("WT_PAIR_PHONE", "")), "+"),
-		DBPath:           env("WT_DB_PATH", "/data/whatsapp.db"),
-		Publisher:        strings.ToLower(env("WT_PUBLISHER", "mqtt")),
-		DiscoveryPrefix:  env("WT_DISCOVERY_PREFIX", "homeassistant"),
-		HAURL:            strings.TrimSuffix(env("HA_URL", ""), "/"),
-		HAToken:          env("HA_TOKEN", ""),
-		LogLevel:         envLevel("WT_LOG_LEVEL", slog.LevelInfo),
+		Phone:               strings.TrimPrefix(strings.TrimSpace(env("WT_PHONE", "")), "+"),
+		JIDOverride:         strings.TrimSpace(env("WT_JID", "")),
+		Name:                env("WT_NAME", "Contatto"),
+		ComposingTimeout:    envDur("WT_COMPOSING_TIMEOUT", 20*time.Second),
+		OffDelay:            envDur("WT_OFF_DELAY", 3*time.Second),
+		Tick:                envDur("WT_TICK", 2*time.Second),
+		ActivitySticky:      envDur("WT_ACTIVITY_STICKY", 30*time.Second),
+		MarkOnline:          envBool("WT_MARK_ONLINE", true),
+		PushName:            env("WT_PUSH_NAME", "Home Assistant"),
+		PairPhone:           strings.TrimPrefix(strings.TrimSpace(env("WT_PAIR_PHONE", "")), "+"),
+		DBPath:              env("WT_DB_PATH", "/data/whatsapp.db"),
+		StoreMessageContent: envBool("WT_STORE_MESSAGE_CONTENT", true),
+		MessageRetention:    time.Duration(envInt("WT_MESSAGE_RETENTION_DAYS", 60)) * 24 * time.Hour,
+		Publisher:           strings.ToLower(env("WT_PUBLISHER", "mqtt")),
+		DiscoveryPrefix:     env("WT_DISCOVERY_PREFIX", "homeassistant"),
+		HAURL:               strings.TrimSuffix(env("HA_URL", ""), "/"),
+		HAToken:             env("HA_TOKEN", ""),
+		LogLevel:            envLevel("WT_LOG_LEVEL", slog.LevelInfo),
 		MQTT: MQTTConfig{
 			Host:     env("MQTT_HOST", ""),
 			Port:     envInt("MQTT_PORT", 1883),
@@ -106,6 +110,9 @@ func LoadConfig() (Config, error) {
 	}
 	if cfg.ActivitySticky < time.Second {
 		cfg.ActivitySticky = time.Second
+	}
+	if cfg.MessageRetention < 24*time.Hour {
+		cfg.MessageRetention = 24 * time.Hour
 	}
 
 	switch cfg.Publisher {

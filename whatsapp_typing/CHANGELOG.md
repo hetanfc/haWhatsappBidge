@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.4.0
+
+- Nuovo archivio SQLite limitato alla chat configurata: conserva ID, tipo, testo/didascalia,
+  direzione, risposta citata e flag del messaggio per 60 giorni (configurabile)
+- Reazioni complete nella timeline: aggiunta, cambio e rimozione dell'emoji, con indicazione
+  del messaggio/foto/video/vocale a cui si riferiscono
+- Modifiche con confronto tra testo precedente e nuovo; eliminazioni con recupero del testo o
+  della didascalia originale quando il messaggio era già stato osservato
+- Le risposte citate indicano il messaggio bersaglio; vengono segnalati anche inoltrati,
+  effimeri e contenuti a visualizzazione singola
+- Presenza `online`/`offline`, ultimo accesso quando WhatsApp lo espone e relativo cambio di
+  presenza nella timeline
+- Conteggio di pause e riprese durante le sessioni di scrittura, con riepilogo leggibile
+- Nuove entità per presenza, reazioni, modifiche, eliminazioni, pause e riprese
+- Protezione dai replay fuori ordine dopo una riconnessione e limite sicuro per lo stato HA
+- Nuove opzioni `store_message_content` e `message_retention_days`
+
 ## 1.3.2
 
 - Corretto un falso positivo nelle ricevute di lettura: gli eventi generati dal telefono o

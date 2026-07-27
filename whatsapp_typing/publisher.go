@@ -54,6 +54,32 @@ func entities() []entity {
 			},
 		},
 		{
+			Key: "online", Kind: "binary_sensor", Name: "Online",
+			Icon:     "mdi:account-circle",
+			Template: "{{ value_json.online }}",
+			Value: func(s State) string {
+				if !s.PresenceKnown {
+					return unknown
+				}
+				if s.Online {
+					return "on"
+				}
+				return "off"
+			},
+		},
+		{
+			Key: "last_seen", Kind: "sensor", Name: "Ultimo accesso",
+			Icon: "mdi:account-clock-outline", DeviceClass: "timestamp",
+			Template: "{{ value_json.last_seen }}",
+			Value:    func(s State) string { return timestamp(s.LastSeenAt) },
+		},
+		{
+			Key: "last_presence", Kind: "sensor", Name: "Ultimo cambio presenza",
+			Icon: "mdi:account-sync-outline", DeviceClass: "timestamp",
+			Template: "{{ value_json.last_presence }}",
+			Value:    func(s State) string { return timestamp(s.LastPresenceAt) },
+		},
+		{
 			Key: "status", Kind: "sensor", Name: "Stato",
 			Icon:     "mdi:message-text-clock",
 			Template: "{{ value_json.status }}",
@@ -93,6 +119,18 @@ func entities() []entity {
 			Icon: "mdi:clock-outline", DeviceClass: "duration", StateClass: "total_increasing", Unit: "s",
 			Template: "{{ value_json.seconds_today }}",
 			Value:    func(s State) string { return strconv.Itoa(s.SecondsToday) },
+		},
+		{
+			Key: "pauses_today", Kind: "sensor", Name: "Pause di scrittura oggi",
+			Icon: "mdi:pause-circle-outline", StateClass: "total_increasing",
+			Template: "{{ value_json.pauses_today }}",
+			Value:    func(s State) string { return strconv.Itoa(s.PausesToday) },
+		},
+		{
+			Key: "restarts_today", Kind: "sensor", Name: "Riprese di scrittura oggi",
+			Icon: "mdi:restart", StateClass: "total_increasing",
+			Template: "{{ value_json.restarts_today }}",
+			Value:    func(s State) string { return strconv.Itoa(s.RestartsToday) },
 		},
 		{
 			Key: "last_read", Kind: "sensor", Name: "Ultima lettura",
@@ -142,6 +180,36 @@ func entities() []entity {
 			Template: "{{ value_json.messages_today }}",
 			Value:    func(s State) string { return strconv.Itoa(s.MessagesToday) },
 		},
+		{
+			Key: "last_reaction", Kind: "sensor", Name: "Ultima reazione",
+			Icon: "mdi:emoticon-outline", DeviceClass: "timestamp",
+			Template: "{{ value_json.last_reaction }}",
+			Value:    func(s State) string { return timestamp(s.LastReactionAt) },
+		},
+		{
+			Key: "last_reaction_emoji", Kind: "sensor", Name: "Emoji ultima reazione",
+			Icon:     "mdi:emoticon-happy-outline",
+			Template: "{{ value_json.last_reaction_emoji }}",
+			Value:    func(s State) string { return orUnknown(s.LastReactionEmoji) },
+		},
+		{
+			Key: "last_reaction_target", Kind: "sensor", Name: "Messaggio ultima reazione",
+			Icon:     "mdi:message-reply-text-outline",
+			Template: "{{ value_json.last_reaction_target }}",
+			Value:    func(s State) string { return orUnknown(s.LastReactionTarget) },
+		},
+		{
+			Key: "last_edit", Kind: "sensor", Name: "Ultima modifica",
+			Icon: "mdi:message-draw", DeviceClass: "timestamp",
+			Template: "{{ value_json.last_edit }}",
+			Value:    func(s State) string { return timestamp(s.LastEditAt) },
+		},
+		{
+			Key: "last_delete", Kind: "sensor", Name: "Ultima eliminazione",
+			Icon: "mdi:message-off-outline", DeviceClass: "timestamp",
+			Template: "{{ value_json.last_delete }}",
+			Value:    func(s State) string { return timestamp(s.LastDeleteAt) },
+		},
 	}
 }
 
@@ -188,24 +256,41 @@ func statePayload(s State) ([]byte, error) {
 	if s.Typing {
 		typing = "ON"
 	}
+	online := "UNKNOWN"
+	if s.PresenceKnown {
+		online = "OFF"
+		if s.Online {
+			online = "ON"
+		}
+	}
 	return json.Marshal(map[string]any{
-		"typing":             typing,
-		"status":             s.Status,
-		"activity":           s.Activity,
-		"current_duration":   s.CurrentDuration,
-		"last_duration":      s.LastDuration,
-		"last_typing":        timestamp(s.LastTypingAt),
-		"sessions_today":     s.SessionsToday,
-		"seconds_today":      s.SecondsToday,
-		"last_read":          timestamp(s.LastReadAt),
-		"last_delivered":     timestamp(s.LastDeliveredAt),
-		"last_played":        timestamp(s.LastPlayedAt),
-		"reads_today":        s.ReadsToday,
-		"last_message":       timestamp(s.LastMessageAt),
-		"messages_today":     s.MessagesToday,
-		"last_read_target":   orUnknown(s.ReadTarget),
-		"last_played_target": orUnknown(s.PlayedTarget),
-		"attributes":         s.Attributes,
+		"typing":               typing,
+		"online":               online,
+		"last_seen":            timestamp(s.LastSeenAt),
+		"last_presence":        timestamp(s.LastPresenceAt),
+		"status":               s.Status,
+		"activity":             s.Activity,
+		"current_duration":     s.CurrentDuration,
+		"last_duration":        s.LastDuration,
+		"last_typing":          timestamp(s.LastTypingAt),
+		"sessions_today":       s.SessionsToday,
+		"seconds_today":        s.SecondsToday,
+		"pauses_today":         s.PausesToday,
+		"restarts_today":       s.RestartsToday,
+		"last_read":            timestamp(s.LastReadAt),
+		"last_delivered":       timestamp(s.LastDeliveredAt),
+		"last_played":          timestamp(s.LastPlayedAt),
+		"reads_today":          s.ReadsToday,
+		"last_message":         timestamp(s.LastMessageAt),
+		"messages_today":       s.MessagesToday,
+		"last_reaction":        timestamp(s.LastReactionAt),
+		"last_reaction_emoji":  orUnknown(s.LastReactionEmoji),
+		"last_reaction_target": orUnknown(s.LastReactionTarget),
+		"last_edit":            timestamp(s.LastEditAt),
+		"last_delete":          timestamp(s.LastDeleteAt),
+		"last_read_target":     orUnknown(s.ReadTarget),
+		"last_played_target":   orUnknown(s.PlayedTarget),
+		"attributes":           s.Attributes,
 	})
 }
 

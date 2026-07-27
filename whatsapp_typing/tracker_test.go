@@ -72,6 +72,59 @@ func TestShortPauseKeepsOneSession(t *testing.T) {
 	if s.LastDuration != 20 {
 		t.Fatalf("expected a single 20s session, got %ds", s.LastDuration)
 	}
+	if s.PausesToday != 2 || s.RestartsToday != 1 {
+		t.Fatalf("expected 2 pauses / 1 restart, got %d / %d", s.PausesToday, s.RestartsToday)
+	}
+	if s.LastSessionPauses != 2 || s.LastSessionRestarts != 1 {
+		t.Fatalf("last session summary is wrong: %d pauses / %d restarts",
+			s.LastSessionPauses, s.LastSessionRestarts)
+	}
+}
+
+func TestPresenceOnlineOfflineAndLastSeen(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvPresence, Online: true, At: t0})
+	s := tr.snapshot()
+	if !s.PresenceKnown || !s.Online {
+		t.Fatal("online presence was not recorded")
+	}
+
+	lastSeen := t0.Add(time.Minute)
+	tr.handle(Event{Kind: EvPresence, Online: false, LastSeen: lastSeen, At: lastSeen})
+	s = tr.snapshot()
+	if s.Online || !s.LastSeenAt.Equal(lastSeen) {
+		t.Fatalf("offline/last seen was not recorded: online=%v last_seen=%v", s.Online, s.LastSeenAt)
+	}
+	before := len(s.Timeline)
+	tr.handle(Event{Kind: EvPresence, Online: false, LastSeen: lastSeen, At: lastSeen})
+	if after := len(tr.snapshot().Timeline); after != before {
+		t.Fatalf("presence replay added another timeline entry: %d -> %d", before, after)
+	}
+}
+
+func TestInteractionEventsReachStateAndTimeline(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvReaction, At: t0, Emoji: "❤️",
+		Target: "foto delle 18:42", Label: "ha reagito con ❤️ a foto delle 18:42"})
+	tr.handle(Event{Kind: EvEdit, At: t0.Add(time.Second),
+		Label: `ha modificato "prima" in "dopo"`})
+	tr.handle(Event{Kind: EvDelete, At: t0.Add(2 * time.Second),
+		Label: `ha eliminato "dopo"`})
+
+	s := tr.snapshot()
+	if s.LastReactionEmoji != "❤️" || s.LastReactionTarget != "foto delle 18:42" {
+		t.Fatalf("reaction detail missing from state: %+v", s)
+	}
+	if s.LastEditAt.IsZero() || s.LastDeleteAt.IsZero() {
+		t.Fatal("edit/delete timestamps missing from state")
+	}
+	if len(s.Timeline) != 3 || s.Timeline[0].Event != `ha eliminato "dopo"` {
+		t.Fatalf("unexpected interaction timeline: %+v", s.Timeline)
+	}
 }
 
 func TestComposingTimeoutClosesSession(t *testing.T) {

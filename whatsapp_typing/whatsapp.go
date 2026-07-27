@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -23,17 +24,18 @@ import (
 )
 
 type WhatsApp struct {
-	cfg    Config
-	tr     *Tracker
-	log    *slog.Logger
-	cli    *whatsmeow.Client
-	db     *sql.DB
-	target types.JID // phone-number JID of the contact
-	lid    types.JID // LID alias of the same contact, when resolvable
-	kick   chan struct{}
-	seen   map[string]bool // other chats already logged, to keep the log quiet
-	sent   *sentLog        // our outgoing messages, to give receipts a subject
-	pruned time.Time       // last cleanup of the sent log
+	cfg     Config
+	tr      *Tracker
+	log     *slog.Logger
+	cli     *whatsmeow.Client
+	db      *sql.DB
+	target  types.JID // phone-number JID of the contact
+	lid     types.JID // LID alias of the same contact, when resolvable
+	kick    chan struct{}
+	seen    map[string]bool // other chats already logged, to keep the log quiet
+	sent    *sentLog        // our outgoing messages, to give receipts a subject
+	archive *messageArchive // messages in the configured chat, for edits/reactions/deletes
+	pruned  time.Time       // last cleanup of the sent log
 
 	pairFailed atomic.Bool // pairing by code failed: fall back to printing QR codes
 }
@@ -96,6 +98,13 @@ func NewWhatsApp(ctx context.Context, cfg Config, tr *Tracker, log *slog.Logger)
 	}
 	sent.prune(ctx)
 	w.sent = sent
+
+	archive, err := newMessageArchive(ctx, db, log, cfg.MessageRetention)
+	if err != nil {
+		return nil, err
+	}
+	archive.prune(ctx)
+	w.archive = archive
 	w.pruned = time.Now()
 
 	w.cli = whatsmeow.NewClient(device, waLogger)
@@ -218,28 +227,202 @@ func (w *WhatsApp) handleEvent(rawEvt any) {
 	case *events.ChatPresence:
 		w.onChatPresence(evt)
 
+	case *events.Presence:
+		w.onPresence(evt)
+
 	case *events.Receipt:
 		w.onReceipt(evt)
 
 	case *events.Message:
-		if !w.matches(evt.Info.Chat) {
-			return
-		}
-		if evt.Info.IsFromMe {
-			// Our own message, synced from the phone: remembered only so the
-			// receipts coming back can say what they refer to.
-			w.sent.add(context.Background(), evt.Info.ID, evt.Info.Timestamp, messageKind(evt.Message))
-			return
-		}
-		// She hit send: whatever typing session was open is over now.
-		kind := messageKind(evt.Message)
-		w.log.Debug("message received", "kind", kind)
-		w.tr.Send(Event{Kind: EvMessage, Media: kind, At: time.Now()})
+		w.onMessage(evt)
 	}
 }
 
-// messageKind labels an incoming message by type. Only the type is ever looked
-// at: the content is never read, logged or published.
+func (w *WhatsApp) onMessage(evt *events.Message) {
+	if evt == nil || !w.matches(evt.Info.Chat) {
+		return
+	}
+	ctx := context.Background()
+	at := evt.Info.Timestamp
+	if at.IsZero() {
+		at = time.Now()
+	}
+
+	if reaction := evt.Message.GetReactionMessage(); reaction != nil {
+		if !evt.Info.IsFromMe {
+			w.onReaction(ctx, reaction, at)
+		}
+		return
+	}
+
+	protocol := evt.Message.GetProtocolMessage()
+	if protocol != nil && protocol.GetType() == waE2E.ProtocolMessage_REVOKE {
+		w.onRevoke(ctx, evt, protocol, at)
+		return
+	}
+	if evt.IsEdit || (protocol != nil && protocol.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT) {
+		w.onEdit(ctx, evt, protocol, at)
+		return
+	}
+
+	m := w.archiveMessage(evt.Info.ID, evt.Message, evt.Info.IsFromMe, at,
+		evt.IsEphemeral, evt.IsViewOnce)
+	w.archive.add(ctx, m)
+
+	if evt.Info.IsFromMe {
+		// Our own message, synced from the phone: remember it for receipts and
+		// also archive it so reactions/replies can name their target.
+		w.sent.add(ctx, evt.Info.ID, at, m.Kind)
+		return
+	}
+
+	target := w.quotedTarget(ctx, m.QuotedID, messageContext(evt.Message), at)
+	label := incomingMessageLabel(m, target)
+	w.log.Debug("message received", "kind", m.Kind, "reply_to", target,
+		"ephemeral", m.Ephemeral, "view_once", m.ViewOnce, "forwarded", m.Forwarded)
+	w.tr.Send(Event{Kind: EvMessage, Media: m.Kind, At: at, Label: label})
+}
+
+func (w *WhatsApp) archiveMessage(id string, msg *waE2E.Message, fromMe bool, at time.Time, ephemeral, viewOnce bool) archivedMessage {
+	text := messageText(msg)
+	if !w.cfg.StoreMessageContent {
+		text = ""
+	}
+	ctxInfo := messageContext(msg)
+	return archivedMessage{
+		ID:        id,
+		At:        at,
+		Kind:      messageKind(msg),
+		Text:      text,
+		FromMe:    fromMe,
+		QuotedID:  ctxInfo.GetStanzaID(),
+		Ephemeral: ephemeral,
+		ViewOnce:  viewOnce,
+		Forwarded: ctxInfo.GetIsForwarded(),
+		Duration:  messageDuration(msg),
+	}
+}
+
+func (w *WhatsApp) quotedTarget(ctx context.Context, id string, info *waE2E.ContextInfo, now time.Time) string {
+	if id == "" {
+		return ""
+	}
+	if m, ok := w.archive.get(ctx, id); ok {
+		return describeArchivedTarget(m, now)
+	}
+	if quoted := info.GetQuotedMessage(); quoted != nil {
+		return messageKind(quoted) + " citato"
+	}
+	return "messaggio citato"
+}
+
+func (w *WhatsApp) onReaction(ctx context.Context, reaction *waE2E.ReactionMessage, fallback time.Time) {
+	targetID := reaction.GetKey().GetID()
+	if targetID == "" {
+		return
+	}
+	at := fallback
+	if reaction.GetSenderTimestampMS() > 0 {
+		at = time.UnixMilli(reaction.GetSenderTimestampMS())
+	}
+	emoji := reaction.GetText()
+	previous, changed := w.archive.reaction(ctx, targetID, emoji, at)
+	if !changed {
+		return
+	}
+	target := "un messaggio"
+	if m, ok := w.archive.get(ctx, targetID); ok {
+		target = describeArchivedTarget(m, at)
+	}
+
+	label := ""
+	switch {
+	case emoji == "":
+		label = fmt.Sprintf("ha rimosso la reazione %s da %s", previous, target)
+	case previous != "":
+		label = fmt.Sprintf("ha cambiato reazione da %s a %s su %s", previous, emoji, target)
+	default:
+		label = fmt.Sprintf("ha reagito con %s a %s", emoji, target)
+	}
+	w.tr.Send(Event{Kind: EvReaction, At: at, Target: target, Emoji: emoji, Label: label})
+}
+
+func (w *WhatsApp) onEdit(ctx context.Context, evt *events.Message, protocol *waE2E.ProtocolMessage, at time.Time) {
+	targetID := evt.Info.ID
+	nextMessage := evt.Message
+	if protocol != nil && protocol.GetType() == waE2E.ProtocolMessage_MESSAGE_EDIT {
+		if protocol.GetKey().GetID() != "" {
+			targetID = protocol.GetKey().GetID()
+		}
+		nextMessage = protocol.GetEditedMessage()
+	}
+	if targetID == "" || nextMessage == nil {
+		return
+	}
+
+	next := w.archiveMessage(targetID, nextMessage, evt.Info.IsFromMe, at,
+		evt.IsEphemeral, evt.IsViewOnce)
+	old, found, changed := w.archive.edit(ctx, targetID, next, at)
+	if !changed || evt.Info.IsFromMe {
+		return
+	}
+
+	target := "messaggio"
+	if found {
+		target = describeArchivedTarget(old, at)
+	}
+	var label string
+	switch {
+	case found && old.Text != "" && next.Text != "":
+		label = fmt.Sprintf("ha modificato %q in %q", excerpt(old.Text), excerpt(next.Text))
+	case next.Text != "":
+		label = fmt.Sprintf("ha modificato %s in %q", target, excerpt(next.Text))
+	default:
+		label = fmt.Sprintf("ha modificato %s", target)
+	}
+	w.tr.Send(Event{Kind: EvEdit, At: at, Target: target, Label: label})
+}
+
+func (w *WhatsApp) onRevoke(ctx context.Context, evt *events.Message, protocol *waE2E.ProtocolMessage, at time.Time) {
+	targetID := protocol.GetKey().GetID()
+	if targetID == "" {
+		return
+	}
+	old, found, changed := w.archive.delete(ctx, targetID, at)
+	if !changed || evt.Info.IsFromMe {
+		return
+	}
+
+	label := "ha eliminato un messaggio"
+	target := "un messaggio"
+	if found {
+		target = describeArchivedTarget(old, at)
+		switch {
+		case old.Text != "" && old.Kind == "testo":
+			label = fmt.Sprintf("ha eliminato %q (%s)", excerpt(old.Text), target)
+		case old.Text != "":
+			label = fmt.Sprintf("ha eliminato %s, didascalia %q", target, excerpt(old.Text))
+		default:
+			label = "ha eliminato " + target
+		}
+	}
+	w.tr.Send(Event{Kind: EvDelete, At: at, Target: target, Label: label})
+}
+
+func (w *WhatsApp) onPresence(evt *events.Presence) {
+	if evt == nil || !w.matches(evt.From) {
+		return
+	}
+	at := time.Now()
+	w.tr.Send(Event{
+		Kind:     EvPresence,
+		At:       at,
+		Online:   !evt.Unavailable,
+		LastSeen: evt.LastSeen,
+	})
+}
+
+// messageKind labels a message by type.
 func messageKind(msg *waE2E.Message) string {
 	switch {
 	case msg == nil:
@@ -271,6 +454,102 @@ func messageKind(msg *waE2E.Message) string {
 	default:
 		return "altro"
 	}
+}
+
+func messageText(msg *waE2E.Message) string {
+	switch {
+	case msg == nil:
+		return ""
+	case msg.GetConversation() != "":
+		return msg.GetConversation()
+	case msg.GetExtendedTextMessage() != nil:
+		return msg.GetExtendedTextMessage().GetText()
+	case msg.GetImageMessage() != nil:
+		return msg.GetImageMessage().GetCaption()
+	case msg.GetVideoMessage() != nil:
+		return msg.GetVideoMessage().GetCaption()
+	case msg.GetPtvMessage() != nil:
+		return msg.GetPtvMessage().GetCaption()
+	case msg.GetDocumentMessage() != nil:
+		return msg.GetDocumentMessage().GetCaption()
+	default:
+		return ""
+	}
+}
+
+func messageDuration(msg *waE2E.Message) int {
+	switch {
+	case msg == nil:
+		return 0
+	case msg.GetPtvMessage() != nil:
+		return int(msg.GetPtvMessage().GetSeconds())
+	case msg.GetAudioMessage() != nil:
+		return int(msg.GetAudioMessage().GetSeconds())
+	case msg.GetVideoMessage() != nil:
+		return int(msg.GetVideoMessage().GetSeconds())
+	default:
+		return 0
+	}
+}
+
+func messageContext(msg *waE2E.Message) *waE2E.ContextInfo {
+	switch {
+	case msg == nil:
+		return nil
+	case msg.GetExtendedTextMessage() != nil:
+		return msg.GetExtendedTextMessage().GetContextInfo()
+	case msg.GetImageMessage() != nil:
+		return msg.GetImageMessage().GetContextInfo()
+	case msg.GetPtvMessage() != nil:
+		return msg.GetPtvMessage().GetContextInfo()
+	case msg.GetVideoMessage() != nil:
+		return msg.GetVideoMessage().GetContextInfo()
+	case msg.GetAudioMessage() != nil:
+		return msg.GetAudioMessage().GetContextInfo()
+	case msg.GetStickerMessage() != nil:
+		return msg.GetStickerMessage().GetContextInfo()
+	case msg.GetDocumentMessage() != nil:
+		return msg.GetDocumentMessage().GetContextInfo()
+	case msg.GetLocationMessage() != nil:
+		return msg.GetLocationMessage().GetContextInfo()
+	case msg.GetContactMessage() != nil:
+		return msg.GetContactMessage().GetContextInfo()
+	default:
+		return nil
+	}
+}
+
+func incomingMessageLabel(m archivedMessage, replyTarget string) string {
+	label := ""
+	if replyTarget != "" {
+		label = "ha risposto a " + replyTarget
+		if m.Text != "" {
+			label += ": " + fmt.Sprintf("%q", excerpt(m.Text))
+		} else {
+			label += " con " + m.Kind
+		}
+	} else if m.Kind == "testo" && m.Text != "" {
+		label = "messaggio ricevuto: " + fmt.Sprintf("%q", excerpt(m.Text))
+	} else {
+		label = "messaggio ricevuto (" + m.Kind + ")"
+		if m.Text != "" {
+			label += ": " + fmt.Sprintf("%q", excerpt(m.Text))
+		}
+	}
+	var flags []string
+	if m.ViewOnce {
+		flags = append(flags, "visualizzazione singola")
+	}
+	if m.Ephemeral {
+		flags = append(flags, "effimero")
+	}
+	if m.Forwarded {
+		flags = append(flags, "inoltrato")
+	}
+	if len(flags) > 0 {
+		label += " [" + strings.Join(flags, ", ") + "]"
+	}
+	return label
 }
 
 func (w *WhatsApp) onChatPresence(evt *events.ChatPresence) {
@@ -415,6 +694,7 @@ func (w *WhatsApp) maintain(ctx context.Context) {
 		}
 		if time.Since(w.pruned) >= 24*time.Hour {
 			w.sent.prune(ctx)
+			w.archive.prune(ctx)
 			w.pruned = time.Now()
 		}
 		w.ensurePushName(ctx)
@@ -433,6 +713,11 @@ func (w *WhatsApp) maintain(ctx context.Context) {
 			w.log.Warn("subscribe presence failed", "jid", w.target.String(), "err", err)
 		} else {
 			w.log.Debug("presence subscription refreshed", "jid", w.target.String())
+		}
+		if !w.lid.IsEmpty() {
+			if err := w.cli.SubscribePresence(ctx, w.lid); err != nil {
+				w.log.Debug("lid presence subscription failed", "jid", w.lid.String(), "err", err)
+			}
 		}
 	}
 }

@@ -3,8 +3,10 @@ package main
 import (
 	"testing"
 
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestReceiptFromContact(t *testing.T) {
@@ -54,5 +56,38 @@ func TestReceiptFromContact(t *testing.T) {
 				t.Fatalf("receiptFromContact() = %v, wanted %v", got, test.wanted)
 			}
 		})
+	}
+}
+
+func TestMessageMetadataExtraction(t *testing.T) {
+	msg := &waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{
+			Caption: proto.String("una foto"),
+			ContextInfo: &waE2E.ContextInfo{
+				StanzaID:    proto.String("quoted-id"),
+				IsForwarded: proto.Bool(true),
+			},
+		},
+	}
+	if got := messageKind(msg); got != "foto" {
+		t.Fatalf("messageKind() = %q", got)
+	}
+	if got := messageText(msg); got != "una foto" {
+		t.Fatalf("messageText() = %q", got)
+	}
+	if got := messageContext(msg).GetStanzaID(); got != "quoted-id" {
+		t.Fatalf("quoted id = %q", got)
+	}
+	if !messageContext(msg).GetIsForwarded() {
+		t.Fatal("forwarded flag was not extracted")
+	}
+}
+
+func TestIncomingMessageLabels(t *testing.T) {
+	m := archivedMessage{Kind: "testo", Text: "ciao", ViewOnce: true, Forwarded: true}
+	got := incomingMessageLabel(m, "foto delle 18:42")
+	want := `ha risposto a foto delle 18:42: "ciao" [visualizzazione singola, inoltrato]`
+	if got != want {
+		t.Fatalf("incomingMessageLabel() = %q, want %q", got, want)
 	}
 }

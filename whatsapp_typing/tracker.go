@@ -17,14 +17,22 @@ const (
 	EvDelivered                  // our message reached her device (two grey ticks)
 	EvRead                       // she opened the chat and read it (blue ticks)
 	EvPlayed                     // she played a voice note we sent
+	EvReaction                   // she added, changed or removed a reaction
+	EvEdit                       // she edited a message
+	EvDelete                     // she deleted a message for everyone
+	EvPresence                   // online/offline and optional last seen
 )
 
 type Event struct {
-	Kind   EventKind
-	Media  string // typing: "text" or "audio". Messages and receipts: the message type
-	At     time.Time
-	Target string // receipts: what the receipt refers to, e.g. "foto delle 17:02"
-	Repeat int    // receipts: how many times this message got this receipt
+	Kind     EventKind
+	Media    string // typing: "text" or "audio". Messages and receipts: the message type
+	At       time.Time
+	Target   string // receipts: what the receipt refers to, e.g. "foto delle 17:02"
+	Repeat   int    // receipts: how many times this message got this receipt
+	Label    string // fully formatted label for messages/reactions/edits/deletes
+	Emoji    string
+	Online   bool
+	LastSeen time.Time
 }
 
 // Activity labels, in Italian because they land straight in the Home Assistant
@@ -50,14 +58,18 @@ type TimelineEntry struct {
 
 // State is the snapshot handed to the publisher.
 type State struct {
-	Available       bool
-	Typing          bool
-	Status          string // idle | typing | recording | disconnected
-	CurrentDuration int    // seconds in the running session, 0 when idle
-	LastDuration    int    // seconds of the last completed session
-	LastTypingAt    time.Time
-	SessionsToday   int
-	SecondsToday    int
+	Available           bool
+	Typing              bool
+	Status              string // idle | typing | recording | disconnected
+	CurrentDuration     int    // seconds in the running session, 0 when idle
+	LastDuration        int    // seconds of the last completed session
+	LastTypingAt        time.Time
+	SessionsToday       int
+	SecondsToday        int
+	PausesToday         int
+	RestartsToday       int
+	LastSessionPauses   int
+	LastSessionRestarts int
 
 	// Read receipts. Unlike typing, these only move when we send her something:
 	// no outgoing messages means no signal at all, not "she wasn't around".
@@ -68,10 +80,20 @@ type State struct {
 	ReadTarget      string // which message the last read receipt was about
 	PlayedTarget    string
 
-	// Incoming messages: only when they arrive and what type they are, never
-	// their content.
+	// Incoming messages and interaction timestamps.
 	LastMessageAt time.Time
 	MessagesToday int
+
+	PresenceKnown  bool
+	Online         bool
+	LastSeenAt     time.Time
+	LastPresenceAt time.Time
+
+	LastReactionAt     time.Time
+	LastReactionEmoji  string
+	LastReactionTarget string
+	LastEditAt         time.Time
+	LastDeleteAt       time.Time
 
 	// Activity is the single unified state: what is happening right now, or the
 	// last thing that happened if it is still recent.
@@ -101,19 +123,25 @@ type Tracker struct {
 	events chan Event
 	log    *slog.Logger
 
-	mu            sync.Mutex
-	connected     bool
-	typing        bool
-	media         string
-	sessionStart  time.Time
-	lastComposing time.Time
-	pausedAt      time.Time
-	lastDuration  time.Duration
-	lastTypingAt  time.Time
-	endedBy       string
-	sessions      int
-	secondsToday  time.Duration
-	day           string
+	mu              sync.Mutex
+	connected       bool
+	typing          bool
+	media           string
+	sessionStart    time.Time
+	lastComposing   time.Time
+	pausedAt        time.Time
+	lastDuration    time.Duration
+	lastTypingAt    time.Time
+	endedBy         string
+	sessions        int
+	secondsToday    time.Duration
+	currentPauses   int
+	currentRestarts int
+	lastPauses      int
+	lastRestarts    int
+	pausesToday     int
+	restartsToday   int
+	day             string
 
 	lastDelivered time.Time
 	lastRead      time.Time
@@ -125,6 +153,17 @@ type Tracker struct {
 	lastMessage     time.Time
 	lastMessageType string
 	messagesToday   int
+
+	presenceKnown bool
+	online        bool
+	lastSeen      time.Time
+	lastPresence  time.Time
+
+	lastReaction       time.Time
+	lastReactionEmoji  string
+	lastReactionTarget string
+	lastEdit           time.Time
+	lastDelete         time.Time
 
 	// Activity: the label of the last instant event and when it happened, kept
 	// only for as long as ActivitySticky. Typing always wins over these.
@@ -139,7 +178,7 @@ func NewTracker(cfg Config, pub Publisher, log *slog.Logger) *Tracker {
 	return &Tracker{
 		cfg:      cfg,
 		pub:      pub,
-		events:   make(chan Event, 64),
+		events:   make(chan Event, 256),
 		log:      log,
 		media:    "text",
 		day:      time.Now().Format("2006-01-02"),
@@ -178,9 +217,21 @@ func receiptLabel(ev Event) string {
 // window and always lands in the timeline, even when typing keeps the state.
 // Mutex must be held.
 func (t *Tracker) note(at time.Time, label string) {
-	t.lastEventLabel = label
+	t.lastEventLabel = stateSafeLabel(label)
 	t.lastEventAt = at
 	t.addTimeline(at, label)
+}
+
+func stateSafeLabel(s string) string {
+	const maxBytes = 240
+	if len(s) <= maxBytes {
+		return s
+	}
+	runes := []rune(s)
+	for len(runes) > 0 && len(string(runes))+len("…") > maxBytes {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + "…"
 }
 
 // addTimeline prepends an entry, newest first; mutex must be held.
@@ -291,11 +342,18 @@ func (t *Tracker) handle(ev Event) {
 		if ev.Media != "" {
 			t.media = ev.Media
 		}
+		resumed := t.typing && !t.pausedAt.IsZero()
+		if resumed {
+			t.currentRestarts++
+			t.restartsToday++
+		}
 		t.pausedAt = time.Time{}
 		t.lastComposing = ev.At
 		if !t.typing {
 			t.typing = true
 			t.sessionStart = ev.At
+			t.currentPauses = 0
+			t.currentRestarts = 0
 			t.sessions++
 			t.endedBy = ""
 			label := ActTyping
@@ -307,15 +365,18 @@ func (t *Tracker) handle(ev Event) {
 		}
 
 	case EvPaused:
-		if !t.typing {
+		if !t.typing || !t.pausedAt.IsZero() {
 			return
 		}
 		t.pausedAt = ev.At
+		t.currentPauses++
+		t.pausesToday++
 		if t.cfg.OffDelay <= 0 {
 			t.endSession(ev.At, "paused")
 		}
 
 	case EvMessage:
+		hadPauses := t.typing && (t.currentPauses > 0 || t.currentRestarts > 0)
 		if t.typing {
 			t.endSession(ev.At, "message")
 		}
@@ -324,9 +385,17 @@ func (t *Tracker) handle(ev Event) {
 		if ev.Media != "" {
 			t.lastMessageType = ev.Media
 		}
-		label := "messaggio ricevuto"
-		if ev.Media != "" {
-			label += " (" + ev.Media + ")"
+		label := ev.Label
+		if label == "" {
+			label = "messaggio ricevuto"
+			if ev.Media != "" {
+				label += " (" + ev.Media + ")"
+			}
+		}
+		if hadPauses {
+			label += fmt.Sprintf(" [sessione: %ds, %s, %s]",
+				int(t.lastDuration.Seconds()), countWord(t.lastPauses, "pausa", "pause"),
+				countWord(t.lastRestarts, "ripresa", "riprese"))
 		}
 		t.note(ev.At, label)
 
@@ -358,6 +427,47 @@ func (t *Tracker) handle(ev Event) {
 			t.log.Info("media played", "contact", t.cfg.Name, "target", ev.Target,
 				"repeat", ev.Repeat, "at", ev.At.Format(time.RFC3339))
 		}
+
+	case EvReaction:
+		if ev.At.After(t.lastReaction) || ev.Label != t.lastEventLabel {
+			t.lastReaction = ev.At
+			t.lastReactionEmoji = ev.Emoji
+			t.lastReactionTarget = ev.Target
+			t.note(ev.At, ev.Label)
+		}
+
+	case EvEdit:
+		if ev.At.After(t.lastEdit) {
+			t.lastEdit = ev.At
+			t.note(ev.At, ev.Label)
+		}
+
+	case EvDelete:
+		if ev.At.After(t.lastDelete) {
+			t.lastDelete = ev.At
+			t.note(ev.At, ev.Label)
+		}
+
+	case EvPresence:
+		stateChanged := !t.presenceKnown || t.online != ev.Online
+		lastSeenChanged := !ev.LastSeen.IsZero() && ev.LastSeen.After(t.lastSeen)
+		if !stateChanged && !lastSeenChanged {
+			break
+		}
+		t.presenceKnown = true
+		t.online = ev.Online
+		t.lastPresence = ev.At
+		if lastSeenChanged {
+			t.lastSeen = ev.LastSeen
+		}
+		label := "online"
+		if !ev.Online {
+			label = "offline"
+			if !ev.LastSeen.IsZero() {
+				label += " — ultimo accesso " + ev.LastSeen.Format("15:04")
+			}
+		}
+		t.note(ev.At, label)
 	}
 
 	t.refreshActivity(time.Now())
@@ -397,13 +507,20 @@ func (t *Tracker) endSession(end time.Time, reason string) {
 	t.typing = false
 	t.pausedAt = time.Time{}
 	t.lastDuration = d
+	t.lastPauses = t.currentPauses
+	t.lastRestarts = t.currentRestarts
 	t.lastTypingAt = end
 	t.secondsToday += d
 	t.endedBy = reason
 	if reason != "message" {
 		// On "message" the incoming message itself is the timeline entry, and
 		// two lines one second apart would just be noise.
-		t.addTimeline(end, fmt.Sprintf("ha smesso di scrivere (%ds)", int(d.Seconds())))
+		label := fmt.Sprintf("ha smesso di scrivere (%ds", int(d.Seconds()))
+		if t.lastPauses > 0 || t.lastRestarts > 0 {
+			label += ", " + countWord(t.lastPauses, "pausa", "pause") +
+				", " + countWord(t.lastRestarts, "ripresa", "riprese")
+		}
+		t.addTimeline(end, label+")")
 	}
 	t.log.Info("typing stopped", "contact", t.cfg.Name, "seconds", int(d.Seconds()), "reason", reason)
 }
@@ -419,6 +536,8 @@ func (t *Tracker) rollover(now time.Time) {
 	t.secondsToday = 0
 	t.readsToday = 0
 	t.messagesToday = 0
+	t.pausesToday = 0
+	t.restartsToday = 0
 	if t.typing {
 		// A session spanning midnight keeps running but counts from now on.
 		t.sessions = 1
@@ -436,23 +555,36 @@ func (t *Tracker) snapshot() State {
 	defer t.mu.Unlock()
 
 	s := State{
-		Available:       t.connected,
-		Typing:          t.typing,
-		LastDuration:    int(t.lastDuration.Seconds()),
-		LastTypingAt:    t.lastTypingAt,
-		SessionsToday:   t.sessions,
-		SecondsToday:    int(t.secondsToday.Seconds()),
-		LastDeliveredAt: t.lastDelivered,
-		LastReadAt:      t.lastRead,
-		LastPlayedAt:    t.lastPlayed,
-		ReadsToday:      t.readsToday,
-		ReadTarget:      t.readTarget,
-		PlayedTarget:    t.playedTarget,
-		LastMessageAt:   t.lastMessage,
-		MessagesToday:   t.messagesToday,
-		Activity:        t.activityAt(time.Now()),
-		ActivitySince:   t.activitySince,
-		Timeline:        append([]TimelineEntry(nil), t.timeline...),
+		Available:           t.connected,
+		Typing:              t.typing,
+		LastDuration:        int(t.lastDuration.Seconds()),
+		LastTypingAt:        t.lastTypingAt,
+		SessionsToday:       t.sessions,
+		SecondsToday:        int(t.secondsToday.Seconds()),
+		PausesToday:         t.pausesToday,
+		RestartsToday:       t.restartsToday,
+		LastSessionPauses:   t.lastPauses,
+		LastSessionRestarts: t.lastRestarts,
+		LastDeliveredAt:     t.lastDelivered,
+		LastReadAt:          t.lastRead,
+		LastPlayedAt:        t.lastPlayed,
+		ReadsToday:          t.readsToday,
+		ReadTarget:          t.readTarget,
+		PlayedTarget:        t.playedTarget,
+		LastMessageAt:       t.lastMessage,
+		MessagesToday:       t.messagesToday,
+		PresenceKnown:       t.presenceKnown,
+		Online:              t.online,
+		LastSeenAt:          t.lastSeen,
+		LastPresenceAt:      t.lastPresence,
+		LastReactionAt:      t.lastReaction,
+		LastReactionEmoji:   t.lastReactionEmoji,
+		LastReactionTarget:  t.lastReactionTarget,
+		LastEditAt:          t.lastEdit,
+		LastDeleteAt:        t.lastDelete,
+		Activity:            t.activityAt(time.Now()),
+		ActivitySince:       t.activitySince,
+		Timeline:            append([]TimelineEntry(nil), t.timeline...),
 	}
 
 	switch {
@@ -467,12 +599,16 @@ func (t *Tracker) snapshot() State {
 	}
 
 	attrs := map[string]any{
-		"contact":               t.cfg.Name,
-		"media":                 t.media,
-		"connected":             t.connected,
-		"last_session_ended_by": t.endedBy,
-		"composing_timeout":     int(t.cfg.ComposingTimeout.Seconds()),
-		"off_delay":             int(t.cfg.OffDelay.Seconds()),
+		"contact":                  t.cfg.Name,
+		"media":                    t.media,
+		"connected":                t.connected,
+		"last_session_ended_by":    t.endedBy,
+		"composing_timeout":        int(t.cfg.ComposingTimeout.Seconds()),
+		"off_delay":                int(t.cfg.OffDelay.Seconds()),
+		"current_session_pauses":   t.currentPauses,
+		"current_session_restarts": t.currentRestarts,
+		"last_session_pauses":      t.lastPauses,
+		"last_session_restarts":    t.lastRestarts,
 	}
 	if !t.lastPlayed.IsZero() {
 		attrs["last_played"] = t.lastPlayed.Format(time.RFC3339)
@@ -493,6 +629,13 @@ func (t *Tracker) snapshot() State {
 	}
 	s.Attributes = attrs
 	return s
+}
+
+func countWord(n int, singular, plural string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, singular)
+	}
+	return fmt.Sprintf("%d %s", n, plural)
 }
 
 func (t *Tracker) publish() {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.2
+
+- Aggiunte icona e logo dedicati per lo Store di Home Assistant
+
 ## 1.4.1
 
 - Corretto il manifest YAML della versione 1.4.0, che veniva scartato dal Supervisor

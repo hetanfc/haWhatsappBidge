@@ -284,3 +284,75 @@ func TestTypingSessionShowsUpInTimeline(t *testing.T) {
 		t.Fatalf("oldest entry should be the typing start, got %q", tl[1].Event)
 	}
 }
+
+func TestReceiptLabelsNameTheirTarget(t *testing.T) {
+	cases := []struct {
+		name string
+		ev   Event
+		want string
+	}{
+		{"lettura con soggetto",
+			Event{Kind: EvRead, Target: "foto delle 17:02"},
+			"ha letto (foto delle 17:02)"},
+		{"lettura senza soggetto noto",
+			Event{Kind: EvRead},
+			ActRead},
+		{"prima riproduzione",
+			Event{Kind: EvPlayed, Media: "videomessaggio", Target: "videomessaggio delle 21:14", Repeat: 1},
+			"ha ascoltato (videomessaggio delle 21:14)"},
+		{"video riguardato",
+			Event{Kind: EvPlayed, Media: "videomessaggio", Target: "videomessaggio delle 21:14", Repeat: 3},
+			"ha riguardato videomessaggio delle 21:14 (3ª volta)"},
+		{"vocale riascoltato",
+			Event{Kind: EvPlayed, Media: "vocale", Target: "vocale delle 09:30", Repeat: 2},
+			"ha riascoltato vocale delle 09:30 (2ª volta)"},
+	}
+	for _, tc := range cases {
+		if got := receiptLabel(tc.ev); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestDescribeTargets(t *testing.T) {
+	now := time.Date(2026, 7, 27, 18, 0, 0, 0, time.Local)
+	msg := func(h, m int, kind string) sentMessage {
+		return sentMessage{At: time.Date(2026, 7, 27, h, m, 0, 0, time.Local), Kind: kind}
+	}
+
+	if got := describeTargets([]sentMessage{msg(17, 2, "foto")}, 1, now); got != "foto delle 17:02" {
+		t.Errorf("single known message: got %q", got)
+	}
+	if got := describeTargets(nil, 3, now); got != "3 messaggi" {
+		t.Errorf("nothing known: got %q", got)
+	}
+	if got := describeTargets(nil, 1, now); got != "" {
+		t.Errorf("one unknown message should add no detail: got %q", got)
+	}
+	got := describeTargets([]sentMessage{msg(17, 2, "foto"), msg(16, 0, "testo")}, 2, now)
+	if got != "2 messaggi (l'ultimo: foto delle 17:02)" {
+		t.Errorf("batch: got %q", got)
+	}
+
+	yesterday := sentMessage{At: now.AddDate(0, 0, -1), Kind: "vocale"}
+	if got := describeTargets([]sentMessage{yesterday}, 1, now); got != "vocale di ieri alle 18:00" {
+		t.Errorf("yesterday: got %q", got)
+	}
+	old := sentMessage{At: now.AddDate(0, 0, -5), Kind: "video"}
+	if got := describeTargets([]sentMessage{old}, 1, now); got != "video del 22/07 alle 18:00" {
+		t.Errorf("older: got %q", got)
+	}
+}
+
+func TestReadTargetReachesTheState(t *testing.T) {
+	tr, _ := newTestTracker()
+	tr.handle(Event{Kind: EvRead, Target: "foto delle 17:02", At: time.Now()})
+
+	s := tr.snapshot()
+	if s.ReadTarget != "foto delle 17:02" {
+		t.Fatalf("read target missing from the state, got %q", s.ReadTarget)
+	}
+	if s.Activity != "ha letto (foto delle 17:02)" {
+		t.Fatalf("activity should name the target, got %q", s.Activity)
+	}
+}

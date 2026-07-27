@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0
+
+- Le ricevute dicono **a cosa si riferiscono**: "ha letto (foto delle 17:02)",
+  "ha ascoltato (videomessaggio delle 21:14)"
+- Le riproduzioni ripetute vengono contate: "ha riguardato videomessaggio delle 21:14 (3ª volta)"
+- Due nuove entità: `last_read_target` e `last_played_target`
+- I messaggi inviati vengono ricordati in `/data` con **solo id, orario e tipo**, mai il
+  contenuto, e cancellati dopo 60 giorni
+- Per i messaggi mandati prima dell'installazione l'etichetta resta generica: quegli id non
+  sono nella tabella
+
 ## 1.2.0
 
 - Nuovo sensore unificato `activity`: un'unica entità con lo stato corrente (inattivo,

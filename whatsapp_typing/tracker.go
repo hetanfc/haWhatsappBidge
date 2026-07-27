@@ -20,9 +20,11 @@ const (
 )
 
 type Event struct {
-	Kind  EventKind
-	Media string // "text" or "audio"
-	At    time.Time
+	Kind   EventKind
+	Media  string // typing: "text" or "audio". Messages and receipts: the message type
+	At     time.Time
+	Target string // receipts: what the receipt refers to, e.g. "foto delle 17:02"
+	Repeat int    // receipts: how many times this message got this receipt
 }
 
 // Activity labels, in Italian because they land straight in the Home Assistant
@@ -63,6 +65,8 @@ type State struct {
 	LastReadAt      time.Time
 	LastPlayedAt    time.Time
 	ReadsToday      int
+	ReadTarget      string // which message the last read receipt was about
+	PlayedTarget    string
 
 	// Incoming messages: only when they arrive and what type they are, never
 	// their content.
@@ -115,6 +119,8 @@ type Tracker struct {
 	lastRead      time.Time
 	lastPlayed    time.Time
 	readsToday    int
+	readTarget    string // what the last read receipt referred to
+	playedTarget  string
 
 	lastMessage     time.Time
 	lastMessageType string
@@ -139,6 +145,33 @@ func NewTracker(cfg Config, pub Publisher, log *slog.Logger) *Tracker {
 		day:      time.Now().Format("2006-01-02"),
 		activity: ActIdle,
 	}
+}
+
+// receiptLabel writes a receipt out in full: what happened, to which message,
+// and whether it had already happened to that same message before.
+func receiptLabel(ev Event) string {
+	base := ActRead
+	switch ev.Kind {
+	case EvDelivered:
+		base = ActDelivered
+	case EvPlayed:
+		base = ActPlayed
+		if ev.Repeat > 1 {
+			// Opened again: worth its own wording, it is not a first view.
+			verb := "ha riguardato"
+			if ev.Media == "vocale" || ev.Media == "audio" {
+				verb = "ha riascoltato"
+			}
+			if ev.Target == "" {
+				return fmt.Sprintf("%s (%dª volta)", verb, ev.Repeat)
+			}
+			return fmt.Sprintf("%s %s (%dª volta)", verb, ev.Target, ev.Repeat)
+		}
+	}
+	if ev.Target == "" {
+		return base
+	}
+	return base + " (" + ev.Target + ")"
 }
 
 // note records an instant event: it drives the activity sensor for the sticky
@@ -302,22 +335,28 @@ func (t *Tracker) handle(ev Event) {
 	case EvDelivered:
 		if ev.At.After(t.lastDelivered) {
 			t.lastDelivered = ev.At
-			t.note(ev.At, ActDelivered)
+			t.note(ev.At, receiptLabel(ev))
 		}
 
 	case EvRead:
 		if ev.At.After(t.lastRead) {
 			t.lastRead = ev.At
 			t.readsToday++
-			t.note(ev.At, ActRead)
-			t.log.Info("messages read", "contact", t.cfg.Name, "at", ev.At.Format(time.RFC3339))
+			t.readTarget = ev.Target
+			t.note(ev.At, receiptLabel(ev))
+			t.log.Info("messages read", "contact", t.cfg.Name, "target", ev.Target,
+				"at", ev.At.Format(time.RFC3339))
 		}
 
+	// A replay carries an older timestamp, but a genuine second view of the same
+	// clip arrives with a fresh one, so this still lets repeats through.
 	case EvPlayed:
 		if ev.At.After(t.lastPlayed) {
 			t.lastPlayed = ev.At
-			t.note(ev.At, ActPlayed)
-			t.log.Info("voice note played", "contact", t.cfg.Name, "at", ev.At.Format(time.RFC3339))
+			t.playedTarget = ev.Target
+			t.note(ev.At, receiptLabel(ev))
+			t.log.Info("media played", "contact", t.cfg.Name, "target", ev.Target,
+				"repeat", ev.Repeat, "at", ev.At.Format(time.RFC3339))
 		}
 	}
 
@@ -407,6 +446,8 @@ func (t *Tracker) snapshot() State {
 		LastReadAt:      t.lastRead,
 		LastPlayedAt:    t.lastPlayed,
 		ReadsToday:      t.readsToday,
+		ReadTarget:      t.readTarget,
+		PlayedTarget:    t.playedTarget,
 		LastMessageAt:   t.lastMessage,
 		MessagesToday:   t.messagesToday,
 		Activity:        t.activityAt(time.Now()),

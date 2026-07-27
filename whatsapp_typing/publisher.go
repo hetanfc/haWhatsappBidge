@@ -107,7 +107,7 @@ func entities() []entity {
 			Value:    func(s State) string { return timestamp(s.LastDeliveredAt) },
 		},
 		{
-			Key: "last_played", Kind: "sensor", Name: "Ultimo vocale ascoltato",
+			Key: "last_played", Kind: "sensor", Name: "Ultima riproduzione",
 			Icon: "mdi:play-circle-outline", DeviceClass: "timestamp",
 			Template: "{{ value_json.last_played }}",
 			Value:    func(s State) string { return timestamp(s.LastPlayedAt) },
@@ -117,6 +117,18 @@ func entities() []entity {
 			Icon: "mdi:eye-check-outline", StateClass: "total_increasing",
 			Template: "{{ value_json.reads_today }}",
 			Value:    func(s State) string { return strconv.Itoa(s.ReadsToday) },
+		},
+		{
+			Key: "last_read_target", Kind: "sensor", Name: "Cosa ha letto",
+			Icon:     "mdi:file-eye-outline",
+			Template: "{{ value_json.last_read_target }}",
+			Value:    func(s State) string { return orUnknown(s.ReadTarget) },
+		},
+		{
+			Key: "last_played_target", Kind: "sensor", Name: "Cosa ha riprodotto",
+			Icon:     "mdi:motion-play-outline",
+			Template: "{{ value_json.last_played_target }}",
+			Value:    func(s State) string { return orUnknown(s.PlayedTarget) },
 		},
 		{
 			Key: "last_message", Kind: "sensor", Name: "Ultimo messaggio ricevuto",
@@ -131,6 +143,15 @@ func entities() []entity {
 			Value:    func(s State) string { return strconv.Itoa(s.MessagesToday) },
 		},
 	}
+}
+
+// orUnknown keeps a sensor valid when a receipt refers to something we never
+// saw, which is normal for messages sent before this add-on was running.
+func orUnknown(s string) string {
+	if s == "" {
+		return unknown
+	}
+	return s
 }
 
 // timestamp renders a time for a timestamp sensor: Home Assistant rejects an
@@ -168,21 +189,23 @@ func statePayload(s State) ([]byte, error) {
 		typing = "ON"
 	}
 	return json.Marshal(map[string]any{
-		"typing":           typing,
-		"status":           s.Status,
-		"activity":         s.Activity,
-		"current_duration": s.CurrentDuration,
-		"last_duration":    s.LastDuration,
-		"last_typing":      timestamp(s.LastTypingAt),
-		"sessions_today":   s.SessionsToday,
-		"seconds_today":    s.SecondsToday,
-		"last_read":        timestamp(s.LastReadAt),
-		"last_delivered":   timestamp(s.LastDeliveredAt),
-		"last_played":      timestamp(s.LastPlayedAt),
-		"reads_today":      s.ReadsToday,
-		"last_message":     timestamp(s.LastMessageAt),
-		"messages_today":   s.MessagesToday,
-		"attributes":       s.Attributes,
+		"typing":             typing,
+		"status":             s.Status,
+		"activity":           s.Activity,
+		"current_duration":   s.CurrentDuration,
+		"last_duration":      s.LastDuration,
+		"last_typing":        timestamp(s.LastTypingAt),
+		"sessions_today":     s.SessionsToday,
+		"seconds_today":      s.SecondsToday,
+		"last_read":          timestamp(s.LastReadAt),
+		"last_delivered":     timestamp(s.LastDeliveredAt),
+		"last_played":        timestamp(s.LastPlayedAt),
+		"reads_today":        s.ReadsToday,
+		"last_message":       timestamp(s.LastMessageAt),
+		"messages_today":     s.MessagesToday,
+		"last_read_target":   orUnknown(s.ReadTarget),
+		"last_played_target": orUnknown(s.PlayedTarget),
+		"attributes":         s.Attributes,
 	})
 }
 

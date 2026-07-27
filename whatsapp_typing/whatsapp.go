@@ -32,6 +32,8 @@ type WhatsApp struct {
 	lid    types.JID // LID alias of the same contact, when resolvable
 	kick   chan struct{}
 	seen   map[string]bool // other chats already logged, to keep the log quiet
+	sent   *sentLog        // our outgoing messages, to give receipts a subject
+	pruned time.Time       // last cleanup of the sent log
 
 	pairFailed atomic.Bool // pairing by code failed: fall back to printing QR codes
 }
@@ -87,6 +89,14 @@ func NewWhatsApp(ctx context.Context, cfg Config, tr *Tracker, log *slog.Logger)
 	} else {
 		w.target = types.NewJID(cfg.Phone, types.DefaultUserServer)
 	}
+
+	sent, err := newSentLog(ctx, db, log)
+	if err != nil {
+		return nil, err
+	}
+	sent.prune(ctx)
+	w.sent = sent
+	w.pruned = time.Now()
 
 	w.cli = whatsmeow.NewClient(device, waLogger)
 	w.cli.AddEventHandler(w.handleEvent)
@@ -212,7 +222,13 @@ func (w *WhatsApp) handleEvent(rawEvt any) {
 		w.onReceipt(evt)
 
 	case *events.Message:
-		if evt.Info.IsFromMe || !w.matches(evt.Info.Chat) {
+		if !w.matches(evt.Info.Chat) {
+			return
+		}
+		if evt.Info.IsFromMe {
+			// Our own message, synced from the phone: remembered only so the
+			// receipts coming back can say what they refer to.
+			w.sent.add(context.Background(), evt.Info.ID, evt.Info.Timestamp, messageKind(evt.Message))
 			return
 		}
 		// She hit send: whatever typing session was open is over now.
@@ -313,8 +329,30 @@ func (w *WhatsApp) onReceipt(evt *events.Receipt) {
 		return
 	}
 
-	w.log.Debug("receipt", "type", string(evt.Type), "messages", len(evt.MessageIDs), "at", at.Format(time.RFC3339))
-	w.tr.Send(Event{Kind: kind, At: at})
+	ctx := context.Background()
+	ids := make([]string, 0, len(evt.MessageIDs))
+	for _, id := range evt.MessageIDs {
+		ids = append(ids, string(id))
+	}
+
+	known := w.sent.lookup(ctx, ids)
+	ev := Event{
+		Kind:   kind,
+		At:     at,
+		Target: describeTargets(known, len(ids), time.Now()),
+	}
+	if len(known) > 0 {
+		ev.Media = known[0].Kind
+	}
+	if kind == EvPlayed {
+		// Only played receipts repeat in practice, and that repetition is the
+		// interesting part: it means the same clip was opened again.
+		ev.Repeat = w.sent.bump(ctx, ids, string(evt.Type))
+	}
+
+	w.log.Debug("receipt", "type", string(evt.Type), "messages", len(ids),
+		"target", ev.Target, "repeat", ev.Repeat, "at", at.Format(time.RFC3339))
+	w.tr.Send(ev)
 }
 
 func (w *WhatsApp) matches(jid types.JID) bool {
@@ -360,6 +398,10 @@ func (w *WhatsApp) maintain(ctx context.Context) {
 
 		if !w.cli.IsConnected() || !w.cli.IsLoggedIn() {
 			continue
+		}
+		if time.Since(w.pruned) >= 24*time.Hour {
+			w.sent.prune(ctx)
+			w.pruned = time.Now()
 		}
 		w.ensurePushName(ctx)
 		if w.cfg.MarkOnline {

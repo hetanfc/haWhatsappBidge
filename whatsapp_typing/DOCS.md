@@ -22,8 +22,10 @@ Con `contact_name: Contatto` ottieni:
 | `sensor.contatto_seconds_today` | secondi totali passati a scrivere oggi |
 | `sensor.contatto_last_read` | quando ha letto i tuoi messaggi (spunte blu) |
 | `sensor.contatto_last_delivered` | quando un tuo messaggio è arrivato sul suo telefono |
-| `sensor.contatto_last_played` | quando ha ascoltato un tuo vocale o videomessaggio |
+| `sensor.contatto_last_played` | quando ha ascoltato un tuo vocale o guardato un videomessaggio |
 | `sensor.contatto_reads_today` | quante volte ha letto oggi |
+| `sensor.contatto_last_read_target` | **cosa** ha letto: "foto delle 17:02" |
+| `sensor.contatto_last_played_target` | **cosa** ha riprodotto: "videomessaggio delle 21:14" |
 | `sensor.contatto_last_message` | quando ti ha scritto l'ultima volta |
 | `sensor.contatto_messages_today` | quanti messaggi ti ha mandato oggi |
 
@@ -79,6 +81,28 @@ Le ricevute di ritorno sui **tuoi** messaggi arrivano anche a questo dispositivo
 | consegnato (2 spunte grigie) | il suo telefono era raggiungibile in quel momento |
 | letto (2 spunte blu) | ha aperto la chat e l'ha vista |
 | riprodotto | ha ascoltato un vocale o guardato un videomessaggio |
+
+### A cosa si riferisce una ricevuta
+
+Ogni ricevuta porta con sé gli ID dei messaggi a cui si riferisce, e l'add-on tiene una
+tabellina dei **tuoi** messaggi inviati in quella chat per tradurli in parole:
+
+```
+17:20  ha letto (foto delle 17:02)
+21:15  ha ascoltato (videomessaggio delle 21:14)
+22:40  ha riguardato videomessaggio delle 21:14 (3ª volta)
+23:01  ha letto (3 messaggi (l'ultimo: testo di ieri alle 22:55))
+```
+
+Della tabellina fanno parte solo **ID, orario e tipo**: il testo dei tuoi messaggi non viene
+letto né salvato da nessuna parte. Le righe più vecchie di 60 giorni vengono cancellate.
+
+Le riproduzioni ripetute vengono contate: se lo stesso videomessaggio viene aperto di nuovo,
+l'evento lo dice ("3ª volta"). È il modo per capire se un contenuto è stato davvero riguardato
+o se è un doppione del protocollo.
+
+Limite: funziona per i messaggi mandati **da quando l'add-on gira**. Per quelli di prima l'ID è
+sconosciuto e l'etichetta resta generica ("ha letto 2 messaggi"), senza dettaglio.
 
 Due limiti da tenere a mente:
 

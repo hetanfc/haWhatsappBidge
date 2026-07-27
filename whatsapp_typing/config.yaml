@@ -1,6 +1,6 @@
 ---
 name: WhatsApp Typing Sensor
-version: "1.1.0"
+version: "1.2.0"
 slug: whatsapp_typing
 description: Sensore Home Assistant che segue lo stato "sta scrivendo" di un singolo contatto WhatsApp
 url: https://github.com/hetanfc/haWhatsappBidge
@@ -20,6 +20,7 @@ options:
   contact_name: "Contatto"
   composing_timeout: 20
   off_delay: 3
+  activity_sticky: 30
   mark_online: true
   publisher: mqtt
   log_level: info
@@ -29,6 +30,7 @@ schema:
   contact_name: str
   composing_timeout: int(5,300)
   off_delay: int(0,120)
+  activity_sticky: int(1,600)
   mark_online: bool
   publisher: list(mqtt|ha)
   log_level: list(debug|info|warn|error)

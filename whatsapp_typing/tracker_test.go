@@ -17,6 +17,7 @@ func newTestTracker() (*Tracker, *fakePublisher) {
 		ComposingTimeout: 20 * time.Second,
 		OffDelay:         3 * time.Second,
 		Tick:             2 * time.Second,
+		ActivitySticky:   30 * time.Second,
 	}
 	pub := &fakePublisher{}
 	tr := NewTracker(cfg, pub, slog.New(slog.DiscardHandler))
@@ -211,5 +212,75 @@ func TestIncomingMessagesAreCounted(t *testing.T) {
 	}
 	if s.Attributes["last_message_type"] != "vocale" {
 		t.Fatalf("expected the last type to be vocale, got %v", s.Attributes["last_message_type"])
+	}
+}
+
+func TestActivityTypingWinsOverInstantEvents(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvComposing, At: t0})
+	tr.handle(Event{Kind: EvDelivered, At: t0.Add(2 * time.Second)})
+
+	if got := tr.snapshot().Activity; got != ActTyping {
+		t.Fatalf("typing must win over a receipt, got %q", got)
+	}
+	// The receipt still has to be in the readable history.
+	found := false
+	for _, e := range tr.snapshot().Timeline {
+		if e.Event == ActDelivered {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the receipt should appear in the timeline even while typing")
+	}
+}
+
+func TestActivityFallsBackToIdleAfterSticky(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvRead, At: t0})
+	if got := tr.activityAt(t0.Add(10 * time.Second)); got != ActRead {
+		t.Fatalf("inside the sticky window the state should hold, got %q", got)
+	}
+	if got := tr.activityAt(t0.Add(31 * time.Second)); got != ActIdle {
+		t.Fatalf("after the sticky window it should be idle, got %q", got)
+	}
+}
+
+func TestTimelineIsNewestFirstAndCapped(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	for i := range timelineSize + 10 {
+		tr.handle(Event{Kind: EvRead, At: t0.Add(time.Duration(i) * time.Minute)})
+	}
+	tl := tr.snapshot().Timeline
+	if len(tl) != timelineSize {
+		t.Fatalf("timeline should be capped at %d, got %d", timelineSize, len(tl))
+	}
+	if !tl[0].At.After(tl[1].At) {
+		t.Fatal("timeline must be newest first")
+	}
+}
+
+func TestTypingSessionShowsUpInTimeline(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvComposing, At: t0})
+	tr.handle(Event{Kind: EvMessage, Media: "foto", At: t0.Add(12 * time.Second)})
+
+	tl := tr.snapshot().Timeline
+	if len(tl) != 2 {
+		t.Fatalf("expected the typing start and the message, got %d entries: %+v", len(tl), tl)
+	}
+	if tl[0].Event != "messaggio ricevuto (foto)" {
+		t.Fatalf("newest entry should be the message, got %q", tl[0].Event)
+	}
+	if tl[1].Event != ActTyping {
+		t.Fatalf("oldest entry should be the typing start, got %q", tl[1].Event)
 	}
 }

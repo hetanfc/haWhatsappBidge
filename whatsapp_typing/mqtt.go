@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,8 @@ type MQTTPublisher struct {
 	log  *slog.Logger
 	cli  mqtt.Client
 	base string
+
+	lastTimeline []byte // last published timeline, to skip identical republishes
 }
 
 func NewMQTTPublisher(cfg Config, log *slog.Logger) (*MQTTPublisher, error) {
@@ -44,6 +47,9 @@ func NewMQTTPublisher(cfg Config, log *slog.Logger) (*MQTTPublisher, error) {
 	// broker restart that wiped retained messages.
 	opts.SetOnConnectHandler(func(mqtt.Client) {
 		p.log.Info("mqtt connected", "broker", cfg.MQTT.Host)
+		// A broker restart wipes retained messages, so forget what we think is
+		// already published and let the next state resend the timeline.
+		p.lastTimeline = nil
 		if err := p.publishDiscovery(); err != nil {
 			p.log.Error("discovery publish failed", "err", err)
 		}
@@ -65,6 +71,7 @@ func NewMQTTPublisher(cfg Config, log *slog.Logger) (*MQTTPublisher, error) {
 
 func (p *MQTTPublisher) availabilityTopic() string { return p.base + "/availability" }
 func (p *MQTTPublisher) stateTopic() string        { return p.base + "/state" }
+func (p *MQTTPublisher) timelineTopic() string     { return p.base + "/timeline" }
 
 func (p *MQTTPublisher) device() map[string]any {
 	return map[string]any{
@@ -113,6 +120,10 @@ func (p *MQTTPublisher) publishDiscovery() error {
 			payload["json_attributes_topic"] = p.stateTopic()
 			payload["json_attributes_template"] = "{{ value_json.attributes | tojson }}"
 		}
+		if e.Timeline {
+			payload["json_attributes_topic"] = p.timelineTopic()
+			payload["json_attributes_template"] = "{{ value_json | tojson }}"
+		}
 
 		body, err := json.Marshal(payload)
 		if err != nil {
@@ -133,6 +144,17 @@ func (p *MQTTPublisher) PublishState(s State) error {
 	}
 	if err := p.publish(p.stateTopic(), body, true); err != nil {
 		return err
+	}
+
+	timeline, err := json.Marshal(timelineAttrs(s))
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(timeline, p.lastTimeline) {
+		if err := p.publish(p.timelineTopic(), timeline, true); err != nil {
+			return err
+		}
+		p.lastTimeline = timeline
 	}
 	avail := "offline"
 	if s.Available {

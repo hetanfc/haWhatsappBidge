@@ -12,6 +12,7 @@ Con `contact_name: Contatto` ottieni:
 
 | Entità | Cosa fa |
 |---|---|
+| `sensor.contatto_activity` | **il riassunto di tutto**: cosa sta succedendo adesso, con la cronologia negli attributi |
 | `binary_sensor.contatto_typing` | ON finché sta scrivendo. Porta gli attributi (media, inizio sessione, motivo di chiusura) |
 | `sensor.contatto_status` | `idle` / `typing` / `recording` (nota vocale) / `disconnected` |
 | `sensor.contatto_current_duration` | secondi della sessione **in corso**, aggiornato ogni 2 s |
@@ -30,6 +31,44 @@ L'attributo `last_message_type` dice **che tipo** era l'ultimo messaggio ricevut
 `foto`, `video`, `videomessaggio`, `vocale`, `audio`, `sticker`, `documento`, `posizione`,
 `contatto`, `gif`. Il **contenuto dei messaggi non viene mai letto, registrato o pubblicato**:
 solo l'orario e il tipo.
+
+## Il sensore unificato: `sensor.contatto_activity`
+
+Una sola entità che racconta cosa succede, invece di guardarne tredici. Gli stati sono:
+`inattivo`, `sta scrivendo`, `registra vocale`, `messaggio ricevuto (foto)`, `ha letto`,
+`ha ascoltato`, `consegnato`.
+
+Siccome cambia stato a ogni evento, **la cronologia te la disegna Home Assistant da sola**:
+apri la scheda Cronologia o il Registro dell'entità e leggi la giornata riga per riga.
+
+```
+17:02  sta scrivendo
+17:03  messaggio ricevuto (foto)
+17:03  inattivo
+17:20  ha letto
+17:41  registra vocale
+17:42  messaggio ricevuto (vocale)
+```
+
+Due regole di comportamento:
+
+- **Mentre scrive, "sta scrivendo" vince su tutto.** Se le arriva una spunta di consegna a metà
+  sessione, lo stato non cambia: l'evento finisce comunque nella cronologia.
+- Gli eventi **istantanei** (letto, consegnato, messaggio) restano visibili `activity_sticky`
+  secondi (default **30**), poi si torna a `inattivo`. Serve a vederli nella Cronologia senza
+  far sembrare che siano durati ore. Se arriva un altro evento prima, subentra quello.
+
+L'attributo `timeline` contiene le ultime **50** voci già scritte in italiano. Card pronta
+(Impostazioni → Dashboard → aggiungi scheda → Markdown):
+
+```jinja
+{% for e in state_attr('sensor.contatto_activity', 'timeline') %}
+- **{{ e.time }}** — {{ e.event }}
+{% endfor %}
+```
+
+La lista sta in memoria: un riavvio dell'add-on la azzera. La cronologia vera e propria resta
+comunque in Home Assistant, che conserva i cambi di stato per i giorni configurati nel recorder.
 
 ## Spunte: cosa vedi davvero
 
@@ -145,6 +184,7 @@ Il primo avvio mostra codice o QR nei log. Il DB della sessione finisce in `./da
 | `contact_name` | `WT_NAME` | `Contatto` | Base dei nomi entità |
 | `composing_timeout` | `WT_COMPOSING_TIMEOUT` | `20` | Secondi senza refresh prima di spegnere |
 | `off_delay` | `WT_OFF_DELAY` | `3` | Grazia dopo `paused` (0 = spegni subito) |
+| `activity_sticky` | `WT_ACTIVITY_STICKY` | `30` | Quanto resta visibile un evento istantaneo su `activity` |
 | `mark_online` | `WT_MARK_ONLINE` | `true` | Vedi sotto |
 | `publisher` | `WT_PUBLISHER` | `mqtt` | `mqtt` o `ha` |
 | `jid_override` | `WT_JID` | vuoto | Via di fuga se il contatto arriva su un JID `@lid` |

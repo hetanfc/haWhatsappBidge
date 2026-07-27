@@ -25,6 +25,7 @@ type Config struct {
 	ComposingTimeout time.Duration // drop to OFF if no refresh arrives within this
 	OffDelay         time.Duration // grace after "paused" before flipping to OFF
 	Tick             time.Duration // how often the live duration is republished
+	ActivitySticky   time.Duration // how long an instant event stays on the activity sensor
 
 	MarkOnline bool
 	PushName   string
@@ -63,6 +64,7 @@ func LoadConfig() (Config, error) {
 		ComposingTimeout: envDur("WT_COMPOSING_TIMEOUT", 20*time.Second),
 		OffDelay:         envDur("WT_OFF_DELAY", 3*time.Second),
 		Tick:             envDur("WT_TICK", 2*time.Second),
+		ActivitySticky:   envDur("WT_ACTIVITY_STICKY", 30*time.Second),
 		MarkOnline:       envBool("WT_MARK_ONLINE", true),
 		PushName:         env("WT_PUSH_NAME", "Home Assistant"),
 		PairPhone:        strings.TrimPrefix(strings.TrimSpace(env("WT_PAIR_PHONE", "")), "+"),
@@ -101,6 +103,9 @@ func LoadConfig() (Config, error) {
 	}
 	if cfg.Tick < time.Second {
 		cfg.Tick = time.Second
+	}
+	if cfg.ActivitySticky < time.Second {
+		cfg.ActivitySticky = time.Second
 	}
 
 	switch cfg.Publisher {

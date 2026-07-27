@@ -26,7 +26,8 @@ type entity struct {
 	DeviceClass string
 	StateClass  string
 	Unit        string
-	Attrs       bool
+	Attrs       bool // carries the shared attributes of the typing sensor
+	Timeline    bool // carries the readable history, published only when it changes
 	Template    string
 	Value       func(s State) string
 }
@@ -35,6 +36,12 @@ const unknown = "unknown"
 
 func entities() []entity {
 	return []entity{
+		{
+			Key: "activity", Kind: "sensor", Name: "Attività",
+			Icon: "mdi:timeline-text-outline", Timeline: true,
+			Template: "{{ value_json.activity }}",
+			Value:    func(s State) string { return s.Activity },
+		},
 		{
 			Key: "typing", Kind: "binary_sensor", Name: "Sta scrivendo",
 			Icon: "mdi:pencil", Attrs: true,
@@ -135,6 +142,25 @@ func timestamp(t time.Time) string {
 	return t.Format(time.RFC3339)
 }
 
+// timelineAttrs is the readable history attached to the activity sensor. It is
+// published on its own topic and only when it changes: the state topic is
+// refreshed every couple of seconds while she types, and dragging 50 entries
+// along every time would bloat the Home Assistant recorder for nothing.
+func timelineAttrs(s State) map[string]any {
+	entries := s.Timeline
+	if entries == nil {
+		entries = []TimelineEntry{}
+	}
+	attrs := map[string]any{
+		"timeline":   entries,
+		"last_event": s.Activity,
+	}
+	if !s.ActivitySince.IsZero() {
+		attrs["since"] = s.ActivitySince.Format(time.RFC3339)
+	}
+	return attrs
+}
+
 // statePayload is what lands on the single MQTT state topic.
 func statePayload(s State) ([]byte, error) {
 	typing := "OFF"
@@ -144,6 +170,7 @@ func statePayload(s State) ([]byte, error) {
 	return json.Marshal(map[string]any{
 		"typing":           typing,
 		"status":           s.Status,
+		"activity":         s.Activity,
 		"current_duration": s.CurrentDuration,
 		"last_duration":    s.LastDuration,
 		"last_typing":      timestamp(s.LastTypingAt),
@@ -175,13 +202,30 @@ type HAPublisher struct {
 	cfg  Config
 	log  *slog.Logger
 	http *http.Client
+
+	lastPost map[string]string // per entity, to skip identical writes
+	lastFull time.Time         // when we last wrote everything regardless
 }
 
 func NewHAPublisher(cfg Config, log *slog.Logger) *HAPublisher {
-	return &HAPublisher{cfg: cfg, log: log, http: &http.Client{Timeout: 10 * time.Second}}
+	return &HAPublisher{
+		cfg:      cfg,
+		log:      log,
+		http:     &http.Client{Timeout: 10 * time.Second},
+		lastPost: map[string]string{},
+	}
 }
 
+// fullResync is how often every entity is rewritten even when nothing changed,
+// so a Home Assistant restart doesn't leave the entities missing for long.
+const fullResync = 2 * time.Minute
+
 func (p *HAPublisher) PublishState(s State) error {
+	full := time.Since(p.lastFull) >= fullResync
+	if full {
+		p.lastFull = time.Now()
+	}
+
 	for _, e := range entities() {
 		id := fmt.Sprintf("%s.%s_%s", e.Kind, p.cfg.Slug, e.Key)
 		state := e.Value(s)
@@ -208,9 +252,19 @@ func (p *HAPublisher) PublishState(s State) error {
 				attrs[k] = v
 			}
 		}
+		if e.Timeline {
+			for k, v := range timelineAttrs(s) {
+				attrs[k] = v
+			}
+		}
 		body, err := json.Marshal(map[string]any{"state": state, "attributes": attrs})
 		if err != nil {
 			return err
+		}
+		// Nothing moved for this entity: writing it again would only add rows to
+		// the recorder and traffic to the API.
+		if !full && p.lastPost[id] == string(body) {
+			continue
 		}
 		req, err := http.NewRequest(http.MethodPost, p.cfg.HAURL+"/api/states/"+id, bytes.NewReader(body))
 		if err != nil {
@@ -227,6 +281,7 @@ func (p *HAPublisher) PublishState(s State) error {
 		if resp.StatusCode >= 300 {
 			return fmt.Errorf("home assistant returned %s for %s", resp.Status, id)
 		}
+		p.lastPost[id] = string(body)
 	}
 	return nil
 }

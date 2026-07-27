@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0
+
+- Nuovo sensore unificato `activity`: un'unica entità con lo stato corrente (inattivo,
+  sta scrivendo, registra vocale, messaggio ricevuto, ha letto, ha ascoltato, consegnato),
+  così Cronologia e Registro di Home Assistant diventano leggibili riga per riga
+- Attributo `timeline` con le ultime 50 voci già formattate, per una card markdown
+- Nuova opzione `activity_sticky` (default 30 s): quanto resta visibile un evento istantaneo
+  prima di tornare a inattivo
+- Mentre sta scrivendo, lo stato resta "sta scrivendo": le ricevute non lo sovrascrivono,
+  ma finiscono comunque nella cronologia
+- La cronologia viene pubblicata su un topic dedicato solo quando cambia, e il publisher `ha`
+  non riscrive più entità identiche: molte meno righe nel database di Home Assistant
+
 ## 1.1.0
 
 - Nuovi sensori dalle ricevute di ritorno: `last_read` (spunte blu), `last_delivered`

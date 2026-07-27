@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -22,6 +23,27 @@ type Event struct {
 	Kind  EventKind
 	Media string // "text" or "audio"
 	At    time.Time
+}
+
+// Activity labels, in Italian because they land straight in the Home Assistant
+// history and logbook.
+const (
+	ActIdle      = "inattivo"
+	ActTyping    = "sta scrivendo"
+	ActRecording = "registra vocale"
+	ActDelivered = "consegnato"
+	ActRead      = "ha letto"
+	ActPlayed    = "ha ascoltato"
+)
+
+const timelineSize = 50
+
+// TimelineEntry is one line of the readable history.
+type TimelineEntry struct {
+	At    time.Time `json:"-"`
+	Time  string    `json:"time"`  // HH:MM, for cards
+	Stamp string    `json:"at"`    // RFC3339, for templates
+	Event string    `json:"event"` // what happened, already in words
 }
 
 // State is the snapshot handed to the publisher.
@@ -46,6 +68,12 @@ type State struct {
 	// their content.
 	LastMessageAt time.Time
 	MessagesToday int
+
+	// Activity is the single unified state: what is happening right now, or the
+	// last thing that happened if it is still recent.
+	Activity      string
+	ActivitySince time.Time
+	Timeline      []TimelineEntry
 
 	Attributes map[string]any
 }
@@ -91,17 +119,80 @@ type Tracker struct {
 	lastMessage     time.Time
 	lastMessageType string
 	messagesToday   int
+
+	// Activity: the label of the last instant event and when it happened, kept
+	// only for as long as ActivitySticky. Typing always wins over these.
+	lastEventLabel string
+	lastEventAt    time.Time
+	activity       string
+	activitySince  time.Time
+	timeline       []TimelineEntry
 }
 
 func NewTracker(cfg Config, pub Publisher, log *slog.Logger) *Tracker {
 	return &Tracker{
-		cfg:    cfg,
-		pub:    pub,
-		events: make(chan Event, 64),
-		log:    log,
-		media:  "text",
-		day:    time.Now().Format("2006-01-02"),
+		cfg:      cfg,
+		pub:      pub,
+		events:   make(chan Event, 64),
+		log:      log,
+		media:    "text",
+		day:      time.Now().Format("2006-01-02"),
+		activity: ActIdle,
 	}
+}
+
+// note records an instant event: it drives the activity sensor for the sticky
+// window and always lands in the timeline, even when typing keeps the state.
+// Mutex must be held.
+func (t *Tracker) note(at time.Time, label string) {
+	t.lastEventLabel = label
+	t.lastEventAt = at
+	t.addTimeline(at, label)
+}
+
+// addTimeline prepends an entry, newest first; mutex must be held.
+func (t *Tracker) addTimeline(at time.Time, event string) {
+	entry := TimelineEntry{
+		At:    at,
+		Time:  at.Format("15:04"),
+		Stamp: at.Format(time.RFC3339),
+		Event: event,
+	}
+	t.timeline = append([]TimelineEntry{entry}, t.timeline...)
+	if len(t.timeline) > timelineSize {
+		t.timeline = t.timeline[:timelineSize]
+	}
+}
+
+// activityAt is what the unified sensor should read at that instant; mutex must
+// be held. Typing wins over everything: a receipt arriving mid-session goes to
+// the timeline but must not blank out "sta scrivendo".
+func (t *Tracker) activityAt(now time.Time) string {
+	if !t.connected {
+		return ActIdle
+	}
+	if t.typing {
+		if t.media == "audio" {
+			return ActRecording
+		}
+		return ActTyping
+	}
+	if !t.lastEventAt.IsZero() && now.Sub(t.lastEventAt) < t.cfg.ActivitySticky {
+		return t.lastEventLabel
+	}
+	return ActIdle
+}
+
+// refreshActivity keeps the published label in sync; reports whether it moved.
+// Mutex must be held.
+func (t *Tracker) refreshActivity(now time.Time) bool {
+	label := t.activityAt(now)
+	if label == t.activity {
+		return false
+	}
+	t.activity = label
+	t.activitySince = now
+	return true
 }
 
 func (t *Tracker) Send(ev Event) {
@@ -174,6 +265,11 @@ func (t *Tracker) handle(ev Event) {
 			t.sessionStart = ev.At
 			t.sessions++
 			t.endedBy = ""
+			label := ActTyping
+			if t.media == "audio" {
+				label = ActRecording
+			}
+			t.addTimeline(ev.At, label)
 			t.log.Info("typing started", "contact", t.cfg.Name, "media", t.media)
 		}
 
@@ -195,27 +291,37 @@ func (t *Tracker) handle(ev Event) {
 		if ev.Media != "" {
 			t.lastMessageType = ev.Media
 		}
+		label := "messaggio ricevuto"
+		if ev.Media != "" {
+			label += " (" + ev.Media + ")"
+		}
+		t.note(ev.At, label)
 
 	// Receipts can arrive out of order or be replayed after a reconnect, so
 	// timestamps only ever move forward.
 	case EvDelivered:
 		if ev.At.After(t.lastDelivered) {
 			t.lastDelivered = ev.At
+			t.note(ev.At, ActDelivered)
 		}
 
 	case EvRead:
 		if ev.At.After(t.lastRead) {
 			t.lastRead = ev.At
 			t.readsToday++
+			t.note(ev.At, ActRead)
 			t.log.Info("messages read", "contact", t.cfg.Name, "at", ev.At.Format(time.RFC3339))
 		}
 
 	case EvPlayed:
 		if ev.At.After(t.lastPlayed) {
 			t.lastPlayed = ev.At
+			t.note(ev.At, ActPlayed)
 			t.log.Info("voice note played", "contact", t.cfg.Name, "at", ev.At.Format(time.RFC3339))
 		}
 	}
+
+	t.refreshActivity(time.Now())
 }
 
 // evaluate applies the timeouts; it reports whether the state changed.
@@ -224,18 +330,17 @@ func (t *Tracker) evaluate(now time.Time) bool {
 	defer t.mu.Unlock()
 	t.rollover(now)
 
-	if !t.typing {
-		return false
+	if t.typing {
+		switch {
+		case !t.pausedAt.IsZero() && now.Sub(t.pausedAt) >= t.cfg.OffDelay:
+			t.endSession(t.pausedAt, "paused")
+		case now.Sub(t.lastComposing) >= t.cfg.ComposingTimeout:
+			t.endSession(t.lastComposing, "timeout")
+		}
 	}
-	if !t.pausedAt.IsZero() && now.Sub(t.pausedAt) >= t.cfg.OffDelay {
-		t.endSession(t.pausedAt, "paused")
-		return true
-	}
-	if now.Sub(t.lastComposing) >= t.cfg.ComposingTimeout {
-		t.endSession(t.lastComposing, "timeout")
-		return true
-	}
-	return false
+	// Always re-evaluated, so the activity sensor falls back to idle when the
+	// sticky window of an instant event expires.
+	return t.refreshActivity(now)
 }
 
 // endSession must be called with the mutex held.
@@ -256,6 +361,11 @@ func (t *Tracker) endSession(end time.Time, reason string) {
 	t.lastTypingAt = end
 	t.secondsToday += d
 	t.endedBy = reason
+	if reason != "message" {
+		// On "message" the incoming message itself is the timeline entry, and
+		// two lines one second apart would just be noise.
+		t.addTimeline(end, fmt.Sprintf("ha smesso di scrivere (%ds)", int(d.Seconds())))
+	}
 	t.log.Info("typing stopped", "contact", t.cfg.Name, "seconds", int(d.Seconds()), "reason", reason)
 }
 
@@ -299,6 +409,9 @@ func (t *Tracker) snapshot() State {
 		ReadsToday:      t.readsToday,
 		LastMessageAt:   t.lastMessage,
 		MessagesToday:   t.messagesToday,
+		Activity:        t.activityAt(time.Now()),
+		ActivitySince:   t.activitySince,
+		Timeline:        append([]TimelineEntry(nil), t.timeline...),
 	}
 
 	switch {

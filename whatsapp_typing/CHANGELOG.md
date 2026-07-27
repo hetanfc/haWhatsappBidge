@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0
+
+- Nuovi sensori dalle ricevute di ritorno: `last_read` (spunte blu), `last_delivered`
+  (consegnato), `last_played` (vocale o videomessaggio riprodotto) e `reads_today`
+- Nuovi sensori sui messaggi in arrivo: `last_message` e `messages_today`, con l'attributo
+  `last_message_type` (testo, foto, video, videomessaggio, vocale, sticker, documento…)
+- Del contenuto dei messaggi non viene letto né pubblicato niente: solo orario e tipo
+- Le ricevute riproposte dopo una riconnessione non fanno più tornare indietro i timestamp
+  né gonfiano i contatori
+
 ## 1.0.2
 
 - Corretto l'accoppiamento con codice: WhatsApp valida il nome del client e rifiuta con

@@ -87,7 +87,52 @@ func entities() []entity {
 			Template: "{{ value_json.seconds_today }}",
 			Value:    func(s State) string { return strconv.Itoa(s.SecondsToday) },
 		},
+		{
+			Key: "last_read", Kind: "sensor", Name: "Ultima lettura",
+			Icon: "mdi:check-all", DeviceClass: "timestamp",
+			Template: "{{ value_json.last_read }}",
+			Value:    func(s State) string { return timestamp(s.LastReadAt) },
+		},
+		{
+			Key: "last_delivered", Kind: "sensor", Name: "Ultima consegna",
+			Icon: "mdi:check", DeviceClass: "timestamp",
+			Template: "{{ value_json.last_delivered }}",
+			Value:    func(s State) string { return timestamp(s.LastDeliveredAt) },
+		},
+		{
+			Key: "last_played", Kind: "sensor", Name: "Ultimo vocale ascoltato",
+			Icon: "mdi:play-circle-outline", DeviceClass: "timestamp",
+			Template: "{{ value_json.last_played }}",
+			Value:    func(s State) string { return timestamp(s.LastPlayedAt) },
+		},
+		{
+			Key: "reads_today", Kind: "sensor", Name: "Letture oggi",
+			Icon: "mdi:eye-check-outline", StateClass: "total_increasing",
+			Template: "{{ value_json.reads_today }}",
+			Value:    func(s State) string { return strconv.Itoa(s.ReadsToday) },
+		},
+		{
+			Key: "last_message", Kind: "sensor", Name: "Ultimo messaggio ricevuto",
+			Icon: "mdi:message-arrow-left-outline", DeviceClass: "timestamp",
+			Template: "{{ value_json.last_message }}",
+			Value:    func(s State) string { return timestamp(s.LastMessageAt) },
+		},
+		{
+			Key: "messages_today", Kind: "sensor", Name: "Messaggi ricevuti oggi",
+			Icon: "mdi:message-badge-outline", StateClass: "total_increasing",
+			Template: "{{ value_json.messages_today }}",
+			Value:    func(s State) string { return strconv.Itoa(s.MessagesToday) },
+		},
 	}
+}
+
+// timestamp renders a time for a timestamp sensor: Home Assistant rejects an
+// empty string, so a receipt we have never seen is reported as unknown.
+func timestamp(t time.Time) string {
+	if t.IsZero() {
+		return unknown
+	}
+	return t.Format(time.RFC3339)
 }
 
 // statePayload is what lands on the single MQTT state topic.
@@ -96,18 +141,20 @@ func statePayload(s State) ([]byte, error) {
 	if s.Typing {
 		typing = "ON"
 	}
-	last := unknown
-	if !s.LastTypingAt.IsZero() {
-		last = s.LastTypingAt.Format(time.RFC3339)
-	}
 	return json.Marshal(map[string]any{
 		"typing":           typing,
 		"status":           s.Status,
 		"current_duration": s.CurrentDuration,
 		"last_duration":    s.LastDuration,
-		"last_typing":      last,
+		"last_typing":      timestamp(s.LastTypingAt),
 		"sessions_today":   s.SessionsToday,
 		"seconds_today":    s.SecondsToday,
+		"last_read":        timestamp(s.LastReadAt),
+		"last_delivered":   timestamp(s.LastDeliveredAt),
+		"last_played":      timestamp(s.LastPlayedAt),
+		"reads_today":      s.ReadsToday,
+		"last_message":     timestamp(s.LastMessageAt),
+		"messages_today":   s.MessagesToday,
 		"attributes":       s.Attributes,
 	})
 }

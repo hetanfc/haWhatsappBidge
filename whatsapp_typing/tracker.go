@@ -13,6 +13,9 @@ const (
 	EvComposing EventKind = iota // "sta scrivendo" / "sta registrando"
 	EvPaused                     // explicit stop from WhatsApp
 	EvMessage                    // a message arrived: she was typing, now she sent it
+	EvDelivered                  // our message reached her device (two grey ticks)
+	EvRead                       // she opened the chat and read it (blue ticks)
+	EvPlayed                     // she played a voice note we sent
 )
 
 type Event struct {
@@ -31,7 +34,20 @@ type State struct {
 	LastTypingAt    time.Time
 	SessionsToday   int
 	SecondsToday    int
-	Attributes      map[string]any
+
+	// Read receipts. Unlike typing, these only move when we send her something:
+	// no outgoing messages means no signal at all, not "she wasn't around".
+	LastDeliveredAt time.Time
+	LastReadAt      time.Time
+	LastPlayedAt    time.Time
+	ReadsToday      int
+
+	// Incoming messages: only when they arrive and what type they are, never
+	// their content.
+	LastMessageAt time.Time
+	MessagesToday int
+
+	Attributes map[string]any
 }
 
 // Tracker turns the raw composing/paused stream into a debounced ON/OFF state
@@ -66,6 +82,15 @@ type Tracker struct {
 	sessions      int
 	secondsToday  time.Duration
 	day           string
+
+	lastDelivered time.Time
+	lastRead      time.Time
+	lastPlayed    time.Time
+	readsToday    int
+
+	lastMessage     time.Time
+	lastMessageType string
+	messagesToday   int
 }
 
 func NewTracker(cfg Config, pub Publisher, log *slog.Logger) *Tracker {
@@ -165,6 +190,31 @@ func (t *Tracker) handle(ev Event) {
 		if t.typing {
 			t.endSession(ev.At, "message")
 		}
+		t.lastMessage = ev.At
+		t.messagesToday++
+		if ev.Media != "" {
+			t.lastMessageType = ev.Media
+		}
+
+	// Receipts can arrive out of order or be replayed after a reconnect, so
+	// timestamps only ever move forward.
+	case EvDelivered:
+		if ev.At.After(t.lastDelivered) {
+			t.lastDelivered = ev.At
+		}
+
+	case EvRead:
+		if ev.At.After(t.lastRead) {
+			t.lastRead = ev.At
+			t.readsToday++
+			t.log.Info("messages read", "contact", t.cfg.Name, "at", ev.At.Format(time.RFC3339))
+		}
+
+	case EvPlayed:
+		if ev.At.After(t.lastPlayed) {
+			t.lastPlayed = ev.At
+			t.log.Info("voice note played", "contact", t.cfg.Name, "at", ev.At.Format(time.RFC3339))
+		}
 	}
 }
 
@@ -218,6 +268,8 @@ func (t *Tracker) rollover(now time.Time) {
 	t.day = day
 	t.sessions = 0
 	t.secondsToday = 0
+	t.readsToday = 0
+	t.messagesToday = 0
 	if t.typing {
 		// A session spanning midnight keeps running but counts from now on.
 		t.sessions = 1
@@ -235,12 +287,18 @@ func (t *Tracker) snapshot() State {
 	defer t.mu.Unlock()
 
 	s := State{
-		Available:     t.connected,
-		Typing:        t.typing,
-		LastDuration:  int(t.lastDuration.Seconds()),
-		LastTypingAt:  t.lastTypingAt,
-		SessionsToday: t.sessions,
-		SecondsToday:  int(t.secondsToday.Seconds()),
+		Available:       t.connected,
+		Typing:          t.typing,
+		LastDuration:    int(t.lastDuration.Seconds()),
+		LastTypingAt:    t.lastTypingAt,
+		SessionsToday:   t.sessions,
+		SecondsToday:    int(t.secondsToday.Seconds()),
+		LastDeliveredAt: t.lastDelivered,
+		LastReadAt:      t.lastRead,
+		LastPlayedAt:    t.lastPlayed,
+		ReadsToday:      t.readsToday,
+		LastMessageAt:   t.lastMessage,
+		MessagesToday:   t.messagesToday,
 	}
 
 	switch {
@@ -261,6 +319,12 @@ func (t *Tracker) snapshot() State {
 		"last_session_ended_by": t.endedBy,
 		"composing_timeout":     int(t.cfg.ComposingTimeout.Seconds()),
 		"off_delay":             int(t.cfg.OffDelay.Seconds()),
+	}
+	if !t.lastPlayed.IsZero() {
+		attrs["last_played"] = t.lastPlayed.Format(time.RFC3339)
+	}
+	if t.lastMessageType != "" {
+		attrs["last_message_type"] = t.lastMessageType
 	}
 	if t.typing {
 		cur := time.Since(t.sessionStart)

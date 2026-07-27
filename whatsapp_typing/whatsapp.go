@@ -12,6 +12,7 @@ import (
 
 	"github.com/mdp/qrterminal/v3"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -207,12 +208,52 @@ func (w *WhatsApp) handleEvent(rawEvt any) {
 	case *events.ChatPresence:
 		w.onChatPresence(evt)
 
+	case *events.Receipt:
+		w.onReceipt(evt)
+
 	case *events.Message:
 		if evt.Info.IsFromMe || !w.matches(evt.Info.Chat) {
 			return
 		}
 		// She hit send: whatever typing session was open is over now.
-		w.tr.Send(Event{Kind: EvMessage, At: time.Now()})
+		kind := messageKind(evt.Message)
+		w.log.Debug("message received", "kind", kind)
+		w.tr.Send(Event{Kind: EvMessage, Media: kind, At: time.Now()})
+	}
+}
+
+// messageKind labels an incoming message by type. Only the type is ever looked
+// at: the content is never read, logged or published.
+func messageKind(msg *waE2E.Message) string {
+	switch {
+	case msg == nil:
+		return "altro"
+	case msg.GetPtvMessage() != nil:
+		return "videomessaggio"
+	case msg.GetAudioMessage() != nil:
+		if msg.GetAudioMessage().GetPTT() {
+			return "vocale"
+		}
+		return "audio"
+	case msg.GetImageMessage() != nil:
+		return "foto"
+	case msg.GetVideoMessage() != nil:
+		if msg.GetVideoMessage().GetGifPlayback() {
+			return "gif"
+		}
+		return "video"
+	case msg.GetStickerMessage() != nil:
+		return "sticker"
+	case msg.GetDocumentMessage() != nil:
+		return "documento"
+	case msg.GetLocationMessage() != nil:
+		return "posizione"
+	case msg.GetContactMessage() != nil:
+		return "contatto"
+	case msg.GetConversation() != "", msg.GetExtendedTextMessage() != nil:
+		return "testo"
+	default:
+		return "altro"
 	}
 }
 
@@ -240,6 +281,40 @@ func (w *WhatsApp) onChatPresence(evt *events.ChatPresence) {
 	case types.ChatPresencePaused:
 		w.tr.Send(Event{Kind: EvPaused, At: time.Now()})
 	}
+}
+
+// onReceipt turns the ticks on our own outgoing messages into events: delivered
+// (her phone was reachable), read (she opened the chat), played (she listened to
+// a voice note or watched a video message).
+//
+// The "self" variants are our own devices reporting what we read, not her, so
+// they are ignored. Regular video and image files never produce a played
+// receipt: for those the blue ticks only say the chat was opened.
+func (w *WhatsApp) onReceipt(evt *events.Receipt) {
+	if !w.matches(evt.MessageSource.Chat) {
+		return
+	}
+
+	at := evt.Timestamp
+	if at.IsZero() {
+		at = time.Now()
+	}
+
+	var kind EventKind
+	switch evt.Type {
+	case types.ReceiptTypeDelivered:
+		kind = EvDelivered
+	case types.ReceiptTypeRead:
+		kind = EvRead
+	case types.ReceiptTypePlayed:
+		kind = EvPlayed
+	default:
+		w.log.Debug("receipt ignored", "type", string(evt.Type))
+		return
+	}
+
+	w.log.Debug("receipt", "type", string(evt.Type), "messages", len(evt.MessageIDs), "at", at.Format(time.RFC3339))
+	w.tr.Send(Event{Kind: kind, At: at})
 }
 
 func (w *WhatsApp) matches(jid types.JID) bool {

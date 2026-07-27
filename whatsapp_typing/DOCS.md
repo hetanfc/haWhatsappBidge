@@ -19,6 +19,38 @@ Con `contact_name: Contatto` ottieni:
 | `sensor.contatto_last_typing` | timestamp dell'ultima volta che ha scritto |
 | `sensor.contatto_sessions_today` | quante volte ha iniziato a scrivere oggi |
 | `sensor.contatto_seconds_today` | secondi totali passati a scrivere oggi |
+| `sensor.contatto_last_read` | quando ha letto i tuoi messaggi (spunte blu) |
+| `sensor.contatto_last_delivered` | quando un tuo messaggio è arrivato sul suo telefono |
+| `sensor.contatto_last_played` | quando ha ascoltato un tuo vocale o videomessaggio |
+| `sensor.contatto_reads_today` | quante volte ha letto oggi |
+| `sensor.contatto_last_message` | quando ti ha scritto l'ultima volta |
+| `sensor.contatto_messages_today` | quanti messaggi ti ha mandato oggi |
+
+L'attributo `last_message_type` dice **che tipo** era l'ultimo messaggio ricevuto: `testo`,
+`foto`, `video`, `videomessaggio`, `vocale`, `audio`, `sticker`, `documento`, `posizione`,
+`contatto`, `gif`. Il **contenuto dei messaggi non viene mai letto, registrato o pubblicato**:
+solo l'orario e il tipo.
+
+## Spunte: cosa vedi davvero
+
+Le ricevute di ritorno sui **tuoi** messaggi arrivano anche a questo dispositivo collegato:
+
+| Segnale | Cosa significa davvero |
+|---|---|
+| consegnato (2 spunte grigie) | il suo telefono era raggiungibile in quel momento |
+| letto (2 spunte blu) | ha aperto la chat e l'ha vista |
+| riprodotto | ha ascoltato un vocale o guardato un videomessaggio |
+
+Due limiti da tenere a mente:
+
+- **Sono passive**: si muovono solo quando **tu** le mandi qualcosa. Se non scrivi per sei ore,
+  di quelle sei ore non sai niente — che è diverso da "non c'era".
+- **I file video e le foto normali non generano "riprodotto"**: lì la spunta blu dice solo che
+  la chat è stata aperta, non che abbia guardato quel contenuto. Solo vocali e videomessaggi
+  (le note video circolari) mandano la ricevuta di riproduzione.
+
+Se lei disattiva le conferme di lettura, le spunte blu spariscono per tutti e `last_read` resta
+fermo: non c'è modo di aggirarlo.
 
 ## Come viene calcolata la durata
 

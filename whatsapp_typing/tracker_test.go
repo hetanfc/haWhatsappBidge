@@ -152,3 +152,64 @@ func TestDisconnectClosesSession(t *testing.T) {
 		t.Fatalf("expected disconnected status, got %q", pub.last.Status)
 	}
 }
+
+func TestReceiptsTrackReadsAndIgnoreReplays(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvDelivered, At: t0})
+	tr.handle(Event{Kind: EvRead, At: t0.Add(30 * time.Second)})
+	tr.handle(Event{Kind: EvPlayed, At: t0.Add(40 * time.Second)})
+	// A reconnect replays older receipts: they must not move anything back.
+	tr.handle(Event{Kind: EvRead, At: t0.Add(10 * time.Second)})
+
+	s := tr.snapshot()
+	if !s.LastReadAt.Equal(t0.Add(30 * time.Second)) {
+		t.Fatalf("last read should stay at the newest receipt, got %v", s.LastReadAt)
+	}
+	if s.ReadsToday != 1 {
+		t.Fatalf("a replayed receipt must not count as a new read, got %d", s.ReadsToday)
+	}
+	if !s.LastDeliveredAt.Equal(t0) || !s.LastPlayedAt.Equal(t0.Add(40*time.Second)) {
+		t.Fatal("delivered and played timestamps were not recorded")
+	}
+
+	tr.handle(Event{Kind: EvRead, At: t0.Add(2 * time.Minute)})
+	if tr.snapshot().ReadsToday != 2 {
+		t.Fatal("a newer read receipt must increment the daily counter")
+	}
+}
+
+func TestReceiptsDoNotTouchTypingState(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvComposing, At: t0})
+	tr.handle(Event{Kind: EvRead, At: t0.Add(time.Second)})
+
+	if !tr.isTyping() {
+		t.Fatal("a read receipt must not end a typing session")
+	}
+	if tr.snapshot().Status != "typing" {
+		t.Fatal("status should still report typing")
+	}
+}
+
+func TestIncomingMessagesAreCounted(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvMessage, Media: "testo", At: t0})
+	tr.handle(Event{Kind: EvMessage, Media: "vocale", At: t0.Add(time.Minute)})
+
+	s := tr.snapshot()
+	if s.MessagesToday != 2 {
+		t.Fatalf("expected 2 messages today, got %d", s.MessagesToday)
+	}
+	if !s.LastMessageAt.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("last message timestamp not updated, got %v", s.LastMessageAt)
+	}
+	if s.Attributes["last_message_type"] != "vocale" {
+		t.Fatalf("expected the last type to be vocale, got %v", s.Attributes["last_message_type"])
+	}
+}

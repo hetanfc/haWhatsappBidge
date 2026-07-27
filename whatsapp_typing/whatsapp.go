@@ -408,6 +408,11 @@ func (w *WhatsApp) maintain(ctx context.Context) {
 			if err := w.cli.SendPresence(ctx, types.PresenceAvailable); err != nil {
 				w.log.Warn("send presence failed", "err", err)
 			}
+			// Being available is required to receive typing events, but it also
+			// makes whatsmeow send active delivery receipts. Switch those back
+			// to inactive so this linked device behaves like WhatsApp Web in the
+			// background and doesn't suppress notifications on the phone.
+			w.cli.SetForceActiveDeliveryReceipts(false)
 		}
 		w.resolveLID(ctx)
 		if err := w.cli.SubscribePresence(ctx, w.target); err != nil {

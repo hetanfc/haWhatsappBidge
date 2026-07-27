@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1
+
+- Mantiene la presenza necessaria agli eventi `typing`, ma invia ricevute di consegna
+  inattive: il dispositivo collegato si comporta come WhatsApp Web in background e non
+  dovrebbe sopprimere le notifiche sul telefono
+
 ## 1.3.0
 
 - Le ricevute dicono **a cosa si riferiscono**: "ha letto (foto delle 17:02)",

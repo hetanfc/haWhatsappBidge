@@ -220,10 +220,12 @@ Il primo avvio mostra codice o QR nei log. Il DB della sessione finisce in `./da
 
 - **`mark_online` ti fa risultare online.** WhatsApp manda gli aggiornamenti di presence (typing
   incluso) solo a chi si dichiara "available": è la stessa cosa che fa WhatsApp Web quando lo
-  tieni aperto. Effetto collaterale noto: finché un client è attivo, il telefono può **smettere
-  di mostrarti le notifiche push** (le considera già "viste" da un altro dispositivo). Con
-  `mark_online: false` non ti dichiari online, ma è molto probabile che gli eventi di typing
-  non arrivino più: è un compromesso da verificare sul campo, non c'è una terza strada.
+  tieni aperto. Subito dopo essersi dichiarato disponibile, l'add-on forza però le ricevute di
+  consegna del dispositivo collegato in modalità `inactive`, come WhatsApp Web in background:
+  i messaggi non vengono marcati come letti e il telefono dovrebbe continuare a mostrare le
+  notifiche push. È un comportamento del protocollo non ufficialmente documentato e va
+  verificato sul campo. Con `mark_online: false` non ti dichiari online, ma è molto probabile
+  che gli eventi di typing non arrivino più.
 - **È un client non ufficiale.** Uso passivo, nessun messaggio inviato, ma il rischio di ban di
   WhatsApp non è formalmente zero.
 - Occupa uno dei **4 slot dispositivi collegati** del tuo account.

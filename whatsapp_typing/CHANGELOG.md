@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1
+
+- Corretto il manifest YAML della versione 1.4.0, che veniva scartato dal Supervisor
+
 ## 1.4.0
 
 - Nuovo archivio SQLite limitato alla chat configurata: conserva ID, tipo, testo/didascalia,

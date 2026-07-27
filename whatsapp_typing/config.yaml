@@ -1,8 +1,8 @@
 ---
 name: WhatsApp Typing Sensor
-version: "1.4.0"
+version: "1.4.1"
 slug: whatsapp_typing
-description: Attività WhatsApp di un contatto: typing, presenza, reazioni, modifiche, eliminazioni e spunte
+description: "Attività WhatsApp di un contatto: typing, presenza, reazioni, modifiche, eliminazioni e spunte"
 url: https://github.com/hetanfc/haWhatsappBidge
 arch:
   - aarch64

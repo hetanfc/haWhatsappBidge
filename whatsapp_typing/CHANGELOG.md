@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.2
+
+- Corretto un falso positivo nelle ricevute di lettura: gli eventi generati dal telefono o
+  da altri dispositivi propri non vengono più attribuiti al contatto configurato
+- Aggiunto un test per distinguere le ricevute del contatto da `read` e `read-self` propri
+
 ## 1.3.1
 
 - Mantiene la presenza necessaria agli eventi `typing`, ma invia ricevute di consegna

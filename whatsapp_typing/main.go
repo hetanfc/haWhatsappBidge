@@ -40,6 +40,19 @@ func main() {
 		log.Error("whatsapp setup failed", "err", err)
 		os.Exit(1)
 	}
+	if cfg.GianniEnabled {
+		mqttPub, ok := pub.(*MQTTPublisher)
+		if !ok {
+			log.Error("Gianni needs the MQTT publisher")
+			os.Exit(1)
+		}
+		gianni := NewGianniRelay(cfg, wa, mqttPub, log)
+		wa.SetGianni(gianni)
+		if err := gianni.Start(ctx); err != nil {
+			log.Error("Gianni relay setup failed", "err", err)
+			os.Exit(1)
+		}
+	}
 	go tracker.Run(ctx)
 	if err := wa.Start(ctx); err != nil {
 		log.Error("whatsapp start failed", "err", err)

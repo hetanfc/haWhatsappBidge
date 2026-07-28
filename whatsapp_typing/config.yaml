@@ -1,6 +1,6 @@
 ---
 name: WhatsApp Typing Sensor
-version: "1.6.0"
+version: "1.7.0"
 slug: whatsapp_typing
 description: "Attività WhatsApp di un contatto: typing, presenza, reazioni, modifiche, eliminazioni e spunte"
 url: https://github.com/hetanfc/haWhatsappBidge
@@ -26,6 +26,11 @@ options:
   store_message_content: true
   message_retention_days: 60
   publisher: mqtt
+  gianni_enabled: true
+  gianni_mention: "@gianni"
+  gianni_topic_in: "gianni/inbox"
+  gianni_topic_out: "gianni/outbox"
+  gianni_image_max_mb: 15
   log_level: info
 schema:
   phone_number: str
@@ -39,6 +44,11 @@ schema:
   store_message_content: bool
   message_retention_days: int(1,3650)
   publisher: list(mqtt|ha)
+  gianni_enabled: bool
+  gianni_mention: str
+  gianni_topic_in: str
+  gianni_topic_out: str
+  gianni_image_max_mb: int(1,50)
   log_level: list(debug|info|warn|error)
   jid_override: str?
   push_name: str?

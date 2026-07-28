@@ -6,6 +6,31 @@ Sensore Home Assistant che segue l'attività di **un singolo contatto** nella ch
 Si collega a WhatsApp come **dispositivo collegato** (esattamente come WhatsApp Web) usando
 [whatsmeow](https://github.com/tulir/whatsmeow), e pubblica su Home Assistant via **MQTT discovery**.
 
+## Gianni: assistente nella chat
+
+Con `gianni_enabled: true`, sia il proprietario del numero sia il contatto configurato possono
+chiamare Gianni scrivendo `@gianni` in qualsiasi punto del messaggio. Per esempio:
+
+```text
+Che tempo farÃ  domani, @gianni?
+@gianni controlla la lista della spesa
+Puoi accendere la luce, @gianni?
+```
+
+L'add-on inoltra la richiesta a `GianniBridge` tramite MQTT e rimanda nella stessa chat la
+risposta prodotta da Claude. Le risposte arrivano gia marcate come Gianni, ad esempio
+`🤖 _testo della risposta_`, e non vengono inoltrate di nuovo al bridge.
+
+Sono supportate tre risposte:
+
+- testo;
+- posizione WhatsApp con coordinate ottenute da Home Assistant;
+- immagine WhatsApp scaricata da un URL HTTP(S), fino al limite configurato.
+
+I topic devono coincidere con quelli di `GianniBridge`: per impostazione predefinita
+`gianni/inbox` per le richieste e `gianni/outbox` per le risposte. Il relay usa la stessa
+connessione MQTT del publisher; quando Gianni e attivo, `publisher` deve essere `mqtt`.
+
 ## Entità create
 
 Con `contact_name: Contatto` ottieni:
@@ -310,6 +335,11 @@ Il primo avvio mostra codice o QR nei log. Il DB della sessione finisce in `./da
 | `store_message_content` | `WT_STORE_MESSAGE_CONTENT` | `true` | Conserva testo/didascalia per mostrare modifiche ed eliminazioni |
 | `message_retention_days` | `WT_MESSAGE_RETENTION_DAYS` | `60` | Giorni di conservazione dell'archivio della chat |
 | `publisher` | `WT_PUBLISHER` | `mqtt` | `mqtt` o `ha` |
+| `gianni_enabled` | `WT_GIANNI_ENABLED` | `true` | Abilita le richieste `@gianni` nella chat configurata |
+| `gianni_mention` | `WT_GIANNI_MENTION` | `@gianni` | Menzione rilevata senza distinzione fra maiuscole e minuscole |
+| `gianni_topic_in` | `WT_GIANNI_TOPIC_IN` | `gianni/inbox` | Topic MQTT verso GianniBridge |
+| `gianni_topic_out` | `WT_GIANNI_TOPIC_OUT` | `gianni/outbox` | Topic MQTT delle risposte |
+| `gianni_image_max_mb` | `WT_GIANNI_IMAGE_MAX_MB` | `15` | Dimensione massima delle immagini inviate |
 | `jid_override` | `WT_JID` | vuoto | Via di fuga se il contatto arriva su un JID `@lid` |
 | `push_name` | `WT_PUSH_NAME` | `Home Assistant` | Solo se WhatsApp non ha ancora sincronizzato il tuo nome |
 | `log_level` | `WT_LOG_LEVEL` | `info` | `debug` mostra ogni evento di presence |
@@ -395,6 +425,7 @@ senza bisogno di WhatsApp.
 | `main.go` | avvio e spegnimento pulito |
 | `config.go` | configurazione da env var |
 | `whatsapp.go` | client whatsmeow, login, sottoscrizione presence, filtro sulla chat |
+| `gianni.go` | relay MQTT, filtro `@gianni`, invio di testo, posizione e immagini |
 | `archive.go` | archivio messaggi, revisioni e stato delle reazioni |
 | `tracker.go` | macchina a stati typing → sessioni |
 | `publisher.go` | definizione delle entità + publisher REST |

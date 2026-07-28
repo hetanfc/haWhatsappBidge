@@ -35,9 +35,14 @@ type WhatsApp struct {
 	seen    map[string]bool // other chats already logged, to keep the log quiet
 	sent    *sentLog        // our outgoing messages, to give receipts a subject
 	archive *messageArchive // messages in the configured chat, for edits/reactions/deletes
+	gianni  *GianniRelay    // optional MQTT relay for messages addressed to @gianni
 	pruned  time.Time       // last cleanup of the sent log
 
 	pairFailed atomic.Bool // pairing by code failed: fall back to printing QR codes
+}
+
+func (w *WhatsApp) SetGianni(gianni *GianniRelay) {
+	w.gianni = gianni
 }
 
 // WhatsApp validates the pairing display name server-side and rejects anything
@@ -281,7 +286,14 @@ func (w *WhatsApp) onMessage(evt *events.Message) {
 		// Our own message, synced from the phone: remember it for receipts and
 		// also archive it so reactions/replies can name their target.
 		w.sent.add(ctx, evt.Info.ID, at, m.Kind)
+		if w.gianni != nil {
+			w.gianni.Forward(evt, m.Text, at)
+		}
 		return
+	}
+
+	if w.gianni != nil {
+		w.gianni.Forward(evt, m.Text, at)
 	}
 
 	target := w.quotedTarget(ctx, m.QuotedID, messageContext(evt.Message), at)

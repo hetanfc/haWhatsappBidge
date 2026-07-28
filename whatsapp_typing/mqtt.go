@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -18,6 +19,9 @@ type MQTTPublisher struct {
 
 	lastTimeline []byte // last published timeline, to skip identical republishes
 	lastEventSeq uint64 // last event fired, so each one fires exactly once
+
+	connectMu    sync.RWMutex
+	connectHooks []func(mqtt.Client)
 }
 
 func NewMQTTPublisher(cfg Config, log *slog.Logger) (*MQTTPublisher, error) {
@@ -54,6 +58,12 @@ func NewMQTTPublisher(cfg Config, log *slog.Logger) (*MQTTPublisher, error) {
 		if err := p.publishDiscovery(); err != nil {
 			p.log.Error("discovery publish failed", "err", err)
 		}
+		p.connectMu.RLock()
+		hooks := append([]func(mqtt.Client){}, p.connectHooks...)
+		p.connectMu.RUnlock()
+		for _, hook := range hooks {
+			hook(p.cli)
+		}
 	})
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 		p.log.Warn("mqtt connection lost", "err", err)
@@ -68,6 +78,12 @@ func NewMQTTPublisher(cfg Config, log *slog.Logger) (*MQTTPublisher, error) {
 		return nil, fmt.Errorf("mqtt connect: %w", err)
 	}
 	return p, nil
+}
+
+func (p *MQTTPublisher) OnConnect(hook func(mqtt.Client)) {
+	p.connectMu.Lock()
+	p.connectHooks = append(p.connectHooks, hook)
+	p.connectMu.Unlock()
 }
 
 func (p *MQTTPublisher) availabilityTopic() string { return p.base + "/availability" }

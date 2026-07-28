@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.0
+
+- Aggiunto il relay MQTT per chiamare Gianni con `@gianni` dalla chat configurata.
+- Le richieste possono partire sia dal proprietario sia dal contatto.
+- Aggiunto l'invio WhatsApp di risposte testuali, posizioni e immagini.
+- Le risposte del bot vengono riconosciute e non generano loop.
+
 ## 1.6.0
 
 - Basta "Non disponibile" a ogni riavvio: l'availability resta solo su una nuova entità

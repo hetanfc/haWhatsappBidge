@@ -13,6 +13,11 @@ export WT_STORE_MESSAGE_CONTENT="$(bashio::config 'store_message_content')"
 export WT_MESSAGE_RETENTION_DAYS="$(bashio::config 'message_retention_days')"
 export WT_LOG_LEVEL="$(bashio::config 'log_level')"
 export WT_PUBLISHER="$(bashio::config 'publisher')"
+export WT_GIANNI_ENABLED="$(bashio::config 'gianni_enabled')"
+export WT_GIANNI_MENTION="$(bashio::config 'gianni_mention')"
+export WT_GIANNI_TOPIC_IN="$(bashio::config 'gianni_topic_in')"
+export WT_GIANNI_TOPIC_OUT="$(bashio::config 'gianni_topic_out')"
+export WT_GIANNI_IMAGE_MAX_MB="$(bashio::config 'gianni_image_max_mb')"
 export WT_DB_PATH="/data/whatsapp.db"
 
 if bashio::config.has_value 'pair_phone'; then

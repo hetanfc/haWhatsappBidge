@@ -41,6 +41,12 @@ type Config struct {
 	HAURL           string
 	HAToken         string
 
+	GianniEnabled    bool
+	GianniMention    string
+	GianniTopicIn    string
+	GianniTopicOut   string
+	GianniImageMaxMB int
+
 	LogLevel slog.Level
 }
 
@@ -79,6 +85,11 @@ func LoadConfig() (Config, error) {
 		DiscoveryPrefix:     env("WT_DISCOVERY_PREFIX", "homeassistant"),
 		HAURL:               strings.TrimSuffix(env("HA_URL", ""), "/"),
 		HAToken:             env("HA_TOKEN", ""),
+		GianniEnabled:       envBool("WT_GIANNI_ENABLED", true),
+		GianniMention:       env("WT_GIANNI_MENTION", "@gianni"),
+		GianniTopicIn:       env("WT_GIANNI_TOPIC_IN", "gianni/inbox"),
+		GianniTopicOut:      env("WT_GIANNI_TOPIC_OUT", "gianni/outbox"),
+		GianniImageMaxMB:    envInt("WT_GIANNI_IMAGE_MAX_MB", 15),
 		LogLevel:            envLevel("WT_LOG_LEVEL", slog.LevelInfo),
 		MQTT: MQTTConfig{
 			Host:     env("MQTT_HOST", ""),
@@ -118,6 +129,23 @@ func LoadConfig() (Config, error) {
 	}
 	if cfg.MessageRetention < 24*time.Hour {
 		cfg.MessageRetention = 24 * time.Hour
+	}
+	if cfg.GianniEnabled {
+		if cfg.Publisher != "mqtt" {
+			return cfg, fmt.Errorf("Gianni requires WT_PUBLISHER=mqtt")
+		}
+		if !strings.HasPrefix(cfg.GianniMention, "@") || len(cfg.GianniMention) < 2 {
+			return cfg, fmt.Errorf("WT_GIANNI_MENTION must start with @")
+		}
+		if cfg.GianniTopicIn == "" || cfg.GianniTopicOut == "" {
+			return cfg, fmt.Errorf("Gianni MQTT topics cannot be empty")
+		}
+		if cfg.GianniTopicIn == cfg.GianniTopicOut {
+			return cfg, fmt.Errorf("Gianni input and output MQTT topics must differ")
+		}
+		if cfg.GianniImageMaxMB < 1 || cfg.GianniImageMaxMB > 50 {
+			return cfg, fmt.Errorf("WT_GIANNI_IMAGE_MAX_MB must be between 1 and 50")
+		}
 	}
 
 	switch cfg.Publisher {

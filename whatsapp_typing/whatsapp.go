@@ -107,6 +107,14 @@ func NewWhatsApp(ctx context.Context, cfg Config, tr *Tracker, log *slog.Logger)
 	w.archive = archive
 	w.pruned = time.Now()
 
+	// Hand the tracker back what it knew before the restart, so the sensors do
+	// not blank out and the replayed events are recognised as old.
+	store, err := newStateStore(ctx, db, log)
+	if err != nil {
+		return nil, err
+	}
+	tr.attachStore(ctx, store)
+
 	w.cli = whatsmeow.NewClient(device, waLogger)
 	w.cli.AddEventHandler(w.handleEvent)
 	return w, nil

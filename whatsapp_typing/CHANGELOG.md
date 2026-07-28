@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.0
+
+- Lo stato conosciuto sopravvive ai riavvii: le entità non tornano più a "Sconosciuto" e gli
+  eventi riproposti da WhatsApp alla riconnessione vengono riconosciuti come già visti
+- Corretta la reazione ripetuta: il controllo anti-replay confrontava l'etichetta con l'ultimo
+  evento di qualsiasi tipo, quindi bastava un evento qualunque in mezzo per far ricomparire la
+  stessa reazione
+- Le disconnessioni brevi non segnano più tutto "Non disponibile": nuova opzione
+  `availability_grace` (default 120 s) prima di dichiarare le entità non disponibili
+- Una reazione rimossa ora si legge `nessuna` invece di `unknown`: "sconosciuto" significa che
+  non lo sappiamo, non che l'ha tolta
+- I contatori giornalieri sopravvivono a riavvii e aggiornamenti, ma solo entro la stessa giornata
+
 ## 1.4.2
 
 - Aggiunte icona e logo dedicati per lo Store di Home Assistant

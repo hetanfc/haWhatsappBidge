@@ -31,13 +31,16 @@ func main() {
 	defer cancel()
 
 	tracker := NewTracker(cfg, pub, log)
-	go tracker.Run(ctx)
 
+	// NewWhatsApp opens the database and hands the tracker its saved state, so
+	// the first publish already carries the last known values instead of a
+	// screenful of "unknown".
 	wa, err := NewWhatsApp(ctx, cfg, tracker, log)
 	if err != nil {
 		log.Error("whatsapp setup failed", "err", err)
 		os.Exit(1)
 	}
+	go tracker.Run(ctx)
 	if err := wa.Start(ctx); err != nil {
 		log.Error("whatsapp start failed", "err", err)
 		os.Exit(1)

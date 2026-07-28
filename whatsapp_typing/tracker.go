@@ -92,6 +92,7 @@ type State struct {
 	LastReactionAt     time.Time
 	LastReactionEmoji  string
 	LastReactionTarget string
+	ReactionSeen       bool
 	LastEditAt         time.Time
 	LastDeleteAt       time.Time
 
@@ -123,8 +124,13 @@ type Tracker struct {
 	events chan Event
 	log    *slog.Logger
 
+	store *stateStore
+	dirty bool // durable fields changed since the last save
+
 	mu              sync.Mutex
 	connected       bool
+	disconnectedAt  time.Time // when the link dropped, for the availability grace
+	lastAvailable   bool      // last published availability, to notice the edge
 	typing          bool
 	media           string
 	sessionStart    time.Time
@@ -162,6 +168,7 @@ type Tracker struct {
 	lastReaction       time.Time
 	lastReactionEmoji  string
 	lastReactionTarget string
+	reactionSeen       bool // a reaction was observed: an empty emoji means "removed", not "unknown"
 	lastEdit           time.Time
 	lastDelete         time.Time
 
@@ -176,13 +183,17 @@ type Tracker struct {
 
 func NewTracker(cfg Config, pub Publisher, log *slog.Logger) *Tracker {
 	return &Tracker{
-		cfg:      cfg,
-		pub:      pub,
-		events:   make(chan Event, 256),
-		log:      log,
-		media:    "text",
-		day:      time.Now().Format("2006-01-02"),
-		activity: ActIdle,
+		cfg:    cfg,
+		pub:    pub,
+		events: make(chan Event, 256),
+		log:    log,
+		media:  "text",
+		day:    time.Now().Format("2006-01-02"),
+		// Not connected yet, but not "unavailable" either: the grace window
+		// covers the seconds it takes to link up after a restart.
+		disconnectedAt: time.Now(),
+		lastAvailable:  true,
+		activity:       ActIdle,
 	}
 }
 
@@ -248,11 +259,26 @@ func (t *Tracker) addTimeline(at time.Time, event string) {
 	}
 }
 
+// available reports whether the entities should still count as alive. The
+// WhatsApp socket drops and comes back on its own several times a day, and
+// blanking every entity to "unavailable" on each blip buries the history in
+// noise, so a gap shorter than AvailabilityGrace is ridden out. Mutex must be
+// held.
+func (t *Tracker) available(now time.Time) bool {
+	if t.connected {
+		return true
+	}
+	if t.disconnectedAt.IsZero() {
+		return false
+	}
+	return now.Sub(t.disconnectedAt) < t.cfg.AvailabilityGrace
+}
+
 // activityAt is what the unified sensor should read at that instant; mutex must
 // be held. Typing wins over everything: a receipt arriving mid-session goes to
 // the timeline but must not blank out "sta scrivendo".
 func (t *Tracker) activityAt(now time.Time) string {
-	if !t.connected {
+	if !t.available(now) {
 		return ActIdle
 	}
 	if t.typing {
@@ -290,6 +316,103 @@ func (t *Tracker) Send(ev Event) {
 	}
 }
 
+// attachStore wires persistence and restores the last known values. It must be
+// called before Run, so the first publish already carries them instead of a
+// screenful of "unknown".
+func (t *Tracker) attachStore(ctx context.Context, store *stateStore) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.store = store
+	st, ok := store.load(ctx)
+	if !ok {
+		return
+	}
+
+	// Counters belong to the day they were counted in: coming back up after
+	// midnight must not resurrect yesterday's totals.
+	if st.Day == time.Now().Format("2006-01-02") {
+		t.day = st.Day
+		t.sessions = st.SessionsToday
+		t.secondsToday = time.Duration(st.SecondsToday) * time.Second
+		t.pausesToday = st.PausesToday
+		t.restartsToday = st.RestartsToday
+		t.readsToday = st.ReadsToday
+		t.messagesToday = st.MessagesToday
+	}
+
+	t.lastTypingAt = st.LastTypingAt
+	t.lastDuration = time.Duration(st.LastDuration) * time.Second
+	t.lastDelivered = st.LastDelivered
+	t.lastRead = st.LastRead
+	t.lastPlayed = st.LastPlayed
+	t.readTarget = st.ReadTarget
+	t.playedTarget = st.PlayedTarget
+	t.lastMessage = st.LastMessage
+	t.lastMessageType = st.LastMessageType
+	t.presenceKnown = st.PresenceKnown
+	t.online = st.Online
+	t.lastSeen = st.LastSeen
+	t.lastPresence = st.LastPresence
+	t.lastReaction = st.LastReaction
+	t.lastReactionEmoji = st.LastReactionEmoji
+	t.lastReactionTarget = st.LastReactionTarget
+	t.reactionSeen = st.ReactionSeen
+	t.lastEdit = st.LastEdit
+	t.lastDelete = st.LastDelete
+	t.timeline = st.Timeline
+
+	t.log.Info("restored last known state", "last_reaction", st.LastReactionEmoji,
+		"timeline", len(st.Timeline))
+}
+
+// durable builds the snapshot to persist; mutex must be held.
+func (t *Tracker) durable() durableState {
+	return durableState{
+		Day:                t.day,
+		LastTypingAt:       t.lastTypingAt,
+		LastDuration:       int(t.lastDuration.Seconds()),
+		SessionsToday:      t.sessions,
+		SecondsToday:       int(t.secondsToday.Seconds()),
+		PausesToday:        t.pausesToday,
+		RestartsToday:      t.restartsToday,
+		LastDelivered:      t.lastDelivered,
+		LastRead:           t.lastRead,
+		LastPlayed:         t.lastPlayed,
+		ReadsToday:         t.readsToday,
+		ReadTarget:         t.readTarget,
+		PlayedTarget:       t.playedTarget,
+		LastMessage:        t.lastMessage,
+		LastMessageType:    t.lastMessageType,
+		MessagesToday:      t.messagesToday,
+		PresenceKnown:      t.presenceKnown,
+		Online:             t.online,
+		LastSeen:           t.lastSeen,
+		LastPresence:       t.lastPresence,
+		LastReaction:       t.lastReaction,
+		LastReactionEmoji:  t.lastReactionEmoji,
+		LastReactionTarget: t.lastReactionTarget,
+		ReactionSeen:       t.reactionSeen,
+		LastEdit:           t.lastEdit,
+		LastDelete:         t.lastDelete,
+		Timeline:           t.timeline,
+	}
+}
+
+// persist writes the durable state if anything changed since the last write.
+func (t *Tracker) persist(ctx context.Context) {
+	t.mu.Lock()
+	if t.store == nil || !t.dirty {
+		t.mu.Unlock()
+		return
+	}
+	t.dirty = false
+	st := t.durable()
+	t.mu.Unlock()
+
+	t.store.save(ctx, st)
+}
+
 func (t *Tracker) SetConnected(v bool) {
 	t.mu.Lock()
 	if t.connected == v {
@@ -297,6 +420,14 @@ func (t *Tracker) SetConnected(v bool) {
 		return
 	}
 	t.connected = v
+	if v {
+		t.disconnectedAt = time.Time{}
+	} else {
+		t.disconnectedAt = time.Now()
+	}
+	// Keep the edge detector in step, otherwise the tick loop can miss the
+	// moment the grace window runs out.
+	t.lastAvailable = t.available(time.Now())
 	if !v && t.typing {
 		// Connection died mid-session: close it at the last known evidence.
 		t.endSession(t.lastComposing, "disconnected")
@@ -308,6 +439,10 @@ func (t *Tracker) SetConnected(v bool) {
 func (t *Tracker) Run(ctx context.Context) {
 	tick := time.NewTicker(500 * time.Millisecond)
 	defer tick.Stop()
+	// Batched on purpose: events can burst, and the point is surviving a
+	// restart, not writing to disk on every single one.
+	saveTick := time.NewTicker(10 * time.Second)
+	defer saveTick.Stop()
 
 	t.publish()
 	lastPublish := time.Now()
@@ -315,12 +450,17 @@ func (t *Tracker) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Last write on the way out, so a clean stop keeps what it knows.
+			t.persist(context.WithoutCancel(ctx))
 			return
 
 		case ev := <-t.events:
 			t.handle(ev)
 			t.publish()
 			lastPublish = time.Now()
+
+		case <-saveTick.C:
+			t.persist(ctx)
 
 		case now := <-tick.C:
 			changed := t.evaluate(now)
@@ -429,10 +569,15 @@ func (t *Tracker) handle(ev Event) {
 		}
 
 	case EvReaction:
-		if ev.At.After(t.lastReaction) || ev.Label != t.lastEventLabel {
+		// Replays after a reconnect carry their original timestamp, so this is
+		// the whole guard: comparing against the last event of any kind, as it
+		// used to, let an old reaction back in as soon as anything else had
+		// happened in between.
+		if ev.At.After(t.lastReaction) {
 			t.lastReaction = ev.At
 			t.lastReactionEmoji = ev.Emoji
 			t.lastReactionTarget = ev.Target
+			t.reactionSeen = true
 			t.note(ev.At, ev.Label)
 		}
 
@@ -470,6 +615,7 @@ func (t *Tracker) handle(ev Event) {
 		t.note(ev.At, label)
 	}
 
+	t.dirty = true
 	t.refreshActivity(time.Now())
 }
 
@@ -489,7 +635,12 @@ func (t *Tracker) evaluate(now time.Time) bool {
 	}
 	// Always re-evaluated, so the activity sensor falls back to idle when the
 	// sticky window of an instant event expires.
-	return t.refreshActivity(now)
+	changed := t.refreshActivity(now)
+	if avail := t.available(now); avail != t.lastAvailable {
+		t.lastAvailable = avail
+		changed = true
+	}
+	return changed
 }
 
 // endSession must be called with the mutex held.
@@ -522,6 +673,7 @@ func (t *Tracker) endSession(end time.Time, reason string) {
 		}
 		t.addTimeline(end, label+")")
 	}
+	t.dirty = true
 	t.log.Info("typing stopped", "contact", t.cfg.Name, "seconds", int(d.Seconds()), "reason", reason)
 }
 
@@ -555,7 +707,7 @@ func (t *Tracker) snapshot() State {
 	defer t.mu.Unlock()
 
 	s := State{
-		Available:           t.connected,
+		Available:           t.available(time.Now()),
 		Typing:              t.typing,
 		LastDuration:        int(t.lastDuration.Seconds()),
 		LastTypingAt:        t.lastTypingAt,
@@ -579,6 +731,7 @@ func (t *Tracker) snapshot() State {
 		LastPresenceAt:      t.lastPresence,
 		LastReactionAt:      t.lastReaction,
 		LastReactionEmoji:   t.lastReactionEmoji,
+		ReactionSeen:        t.reactionSeen,
 		LastReactionTarget:  t.lastReactionTarget,
 		LastEditAt:          t.lastEdit,
 		LastDeleteAt:        t.lastDelete,
@@ -588,7 +741,7 @@ func (t *Tracker) snapshot() State {
 	}
 
 	switch {
-	case !t.connected:
+	case !t.available(time.Now()):
 		s.Status = "disconnected"
 	case t.typing && t.media == "audio":
 		s.Status = "recording"

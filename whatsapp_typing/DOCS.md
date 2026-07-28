@@ -252,6 +252,7 @@ Il primo avvio mostra codice o QR nei log. Il DB della sessione finisce in `./da
 | `composing_timeout` | `WT_COMPOSING_TIMEOUT` | `20` | Secondi senza refresh prima di spegnere |
 | `off_delay` | `WT_OFF_DELAY` | `3` | Grazia dopo `paused` (0 = spegni subito) |
 | `activity_sticky` | `WT_ACTIVITY_STICKY` | `30` | Quanto resta visibile un evento istantaneo su `activity` |
+| `availability_grace` | `WT_AVAILABILITY_GRACE` | `120` | Secondi di disconnessione tollerati prima di segnare le entità non disponibili |
 | `mark_online` | `WT_MARK_ONLINE` | `true` | Vedi sotto |
 | `store_message_content` | `WT_STORE_MESSAGE_CONTENT` | `true` | Conserva testo/didascalia per mostrare modifiche ed eliminazioni |
 | `message_retention_days` | `WT_MESSAGE_RETENTION_DAYS` | `60` | Giorni di conservazione dell'archivio della chat |

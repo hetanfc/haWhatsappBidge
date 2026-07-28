@@ -190,7 +190,7 @@ func entities() []entity {
 			Key: "last_reaction_emoji", Kind: "sensor", Name: "Emoji ultima reazione",
 			Icon:     "mdi:emoticon-happy-outline",
 			Template: "{{ value_json.last_reaction_emoji }}",
-			Value:    func(s State) string { return orUnknown(s.LastReactionEmoji) },
+			Value:    func(s State) string { return reactionEmoji(s) },
 		},
 		{
 			Key: "last_reaction_target", Kind: "sensor", Name: "Messaggio ultima reazione",
@@ -211,6 +211,19 @@ func entities() []entity {
 			Value:    func(s State) string { return timestamp(s.LastDeleteAt) },
 		},
 	}
+}
+
+// reactionEmoji separates "she took the reaction off" from "no idea": only the
+// second one is unknown. Reporting a removal as unknown made the history read
+// as if the sensor had broken.
+func reactionEmoji(s State) string {
+	if !s.ReactionSeen {
+		return unknown
+	}
+	if s.LastReactionEmoji == "" {
+		return "nessuna"
+	}
+	return s.LastReactionEmoji
 }
 
 // orUnknown keeps a sensor valid when a receipt refers to something we never
@@ -284,7 +297,7 @@ func statePayload(s State) ([]byte, error) {
 		"last_message":         timestamp(s.LastMessageAt),
 		"messages_today":       s.MessagesToday,
 		"last_reaction":        timestamp(s.LastReactionAt),
-		"last_reaction_emoji":  orUnknown(s.LastReactionEmoji),
+		"last_reaction_emoji":  reactionEmoji(s),
 		"last_reaction_target": orUnknown(s.LastReactionTarget),
 		"last_edit":            timestamp(s.LastEditAt),
 		"last_delete":          timestamp(s.LastDeleteAt),

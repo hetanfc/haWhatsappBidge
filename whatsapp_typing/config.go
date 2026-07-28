@@ -22,10 +22,11 @@ type Config struct {
 	Name        string // display name of the contact, e.g. "Contatto"
 	Slug        string // slugified name, used for topics and entity ids
 
-	ComposingTimeout time.Duration // drop to OFF if no refresh arrives within this
-	OffDelay         time.Duration // grace after "paused" before flipping to OFF
-	Tick             time.Duration // how often the live duration is republished
-	ActivitySticky   time.Duration // how long an instant event stays on the activity sensor
+	ComposingTimeout  time.Duration // drop to OFF if no refresh arrives within this
+	OffDelay          time.Duration // grace after "paused" before flipping to OFF
+	Tick              time.Duration // how often the live duration is republished
+	ActivitySticky    time.Duration // how long an instant event stays on the activity sensor
+	AvailabilityGrace time.Duration // how long a dropped link is ridden out before going unavailable
 
 	MarkOnline          bool
 	PushName            string
@@ -67,6 +68,7 @@ func LoadConfig() (Config, error) {
 		OffDelay:            envDur("WT_OFF_DELAY", 3*time.Second),
 		Tick:                envDur("WT_TICK", 2*time.Second),
 		ActivitySticky:      envDur("WT_ACTIVITY_STICKY", 30*time.Second),
+		AvailabilityGrace:   envDur("WT_AVAILABILITY_GRACE", 2*time.Minute),
 		MarkOnline:          envBool("WT_MARK_ONLINE", true),
 		PushName:            env("WT_PUSH_NAME", "Home Assistant"),
 		PairPhone:           strings.TrimPrefix(strings.TrimSpace(env("WT_PAIR_PHONE", "")), "+"),
@@ -110,6 +112,9 @@ func LoadConfig() (Config, error) {
 	}
 	if cfg.ActivitySticky < time.Second {
 		cfg.ActivitySticky = time.Second
+	}
+	if cfg.AvailabilityGrace < 0 {
+		cfg.AvailabilityGrace = 0
 	}
 	if cfg.MessageRetention < 24*time.Hour {
 		cfg.MessageRetention = 24 * time.Hour

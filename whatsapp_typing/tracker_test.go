@@ -409,3 +409,38 @@ func TestReadTargetReachesTheState(t *testing.T) {
 		t.Fatalf("activity should name the target, got %q", s.Activity)
 	}
 }
+
+func TestShortDropDoesNotMarkEntitiesUnavailable(t *testing.T) {
+	tr, _ := newTestTracker()
+	tr.cfg.AvailabilityGrace = 2 * time.Minute
+
+	tr.SetConnected(true)
+	tr.SetConnected(false)
+
+	if !tr.snapshot().Available {
+		t.Fatal("a blink of the connection must not blank out the entities")
+	}
+	// Still down once the grace is over: now it is a real outage.
+	tr.mu.Lock()
+	tr.disconnectedAt = time.Now().Add(-3 * time.Minute)
+	tr.mu.Unlock()
+
+	if tr.snapshot().Available {
+		t.Fatal("after the grace window the entities must go unavailable")
+	}
+	if !tr.evaluate(time.Now()) {
+		t.Fatal("the expiry of the grace window must trigger a publish")
+	}
+}
+
+func TestReactionEmojiTellsRemovedFromUnknown(t *testing.T) {
+	if got := reactionEmoji(State{}); got != unknown {
+		t.Fatalf("no reaction ever seen should be unknown, got %q", got)
+	}
+	if got := reactionEmoji(State{ReactionSeen: true}); got != "nessuna" {
+		t.Fatalf("a removed reaction should read as nessuna, got %q", got)
+	}
+	if got := reactionEmoji(State{ReactionSeen: true, LastReactionEmoji: "❤️"}); got != "❤️" {
+		t.Fatalf("got %q", got)
+	}
+}

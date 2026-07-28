@@ -96,6 +96,14 @@ type State struct {
 	LastEditAt         time.Time
 	LastDeleteAt       time.Time
 
+	// LastEvent is the newest thing that happened, kept verbatim for
+	// notifications. EventSeq changes on every single event, including two
+	// identical ones in a row, which a state value alone cannot express.
+	LastEventType string
+	LastEventText string
+	LastEventAt   time.Time
+	EventSeq      uint64
+
 	// Activity is the single unified state: what is happening right now, or the
 	// last thing that happened if it is still recent.
 	Activity      string
@@ -172,6 +180,14 @@ type Tracker struct {
 	lastEdit           time.Time
 	lastDelete         time.Time
 
+	// Every timeline entry is also an event: pendingType carries the kind of the
+	// event being handled so the emission point does not need it passed down.
+	pendingType   string
+	lastEventType string
+	lastEventText string
+	lastEventTime time.Time
+	eventSeq      uint64
+
 	// Activity: the label of the last instant event and when it happened, kept
 	// only for as long as ActivitySticky. Typing always wins over these.
 	lastEventLabel string
@@ -224,6 +240,45 @@ func receiptLabel(ev Event) string {
 	return base + " (" + ev.Target + ")"
 }
 
+// eventSlug is the stable identifier Home Assistant automations match on. It
+// must not be translated: the labels are for humans, these are for triggers.
+func eventSlug(kind EventKind, media string) string {
+	switch kind {
+	case EvComposing:
+		if media == "audio" {
+			return "registra_vocale"
+		}
+		return "sta_scrivendo"
+	case EvMessage:
+		return "messaggio"
+	case EvDelivered:
+		return "consegnato"
+	case EvRead:
+		return "letto"
+	case EvPlayed:
+		return "riprodotto"
+	case EvReaction:
+		return "reazione"
+	case EvEdit:
+		return "modifica"
+	case EvDelete:
+		return "eliminazione"
+	case EvPresence:
+		return "presenza"
+	default:
+		return "altro"
+	}
+}
+
+// eventTypes lists everything the event entity can fire, for its discovery
+// payload. Home Assistant rejects an event_type that was not declared.
+func eventTypes() []string {
+	return []string{
+		"sta_scrivendo", "registra_vocale", "ha_smesso", "messaggio", "consegnato",
+		"letto", "riprodotto", "reazione", "modifica", "eliminazione", "presenza", "altro",
+	}
+}
+
 // note records an instant event: it drives the activity sensor for the sticky
 // window and always lands in the timeline, even when typing keeps the state.
 // Mutex must be held.
@@ -245,8 +300,18 @@ func stateSafeLabel(s string) string {
 	return string(runes) + "…"
 }
 
-// addTimeline prepends an entry, newest first; mutex must be held.
+// addTimeline prepends an entry, newest first, and doubles as the single point
+// where an event is emitted: every timeline line is something that happened.
+// Mutex must be held.
 func (t *Tracker) addTimeline(at time.Time, event string) {
+	t.lastEventType = t.pendingType
+	if t.lastEventType == "" {
+		t.lastEventType = "altro"
+	}
+	t.lastEventText = event
+	t.lastEventTime = at
+	t.eventSeq++
+
 	entry := TimelineEntry{
 		At:    at,
 		Time:  at.Format("15:04"),
@@ -360,6 +425,9 @@ func (t *Tracker) attachStore(ctx context.Context, store *stateStore) {
 	t.reactionSeen = st.ReactionSeen
 	t.lastEdit = st.LastEdit
 	t.lastDelete = st.LastDelete
+	t.lastEventType = st.LastEventType
+	t.lastEventText = st.LastEventText
+	t.lastEventTime = st.LastEventTime
 	t.timeline = st.Timeline
 
 	t.log.Info("restored last known state", "last_reaction", st.LastReactionEmoji,
@@ -395,6 +463,9 @@ func (t *Tracker) durable() durableState {
 		ReactionSeen:       t.reactionSeen,
 		LastEdit:           t.lastEdit,
 		LastDelete:         t.lastDelete,
+		LastEventType:      t.lastEventType,
+		LastEventText:      t.lastEventText,
+		LastEventTime:      t.lastEventTime,
 		Timeline:           t.timeline,
 	}
 }
@@ -476,6 +547,7 @@ func (t *Tracker) handle(ev Event) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.rollover(ev.At)
+	t.pendingType = eventSlug(ev.Kind, ev.Media)
 
 	switch ev.Kind {
 	case EvComposing:
@@ -500,6 +572,7 @@ func (t *Tracker) handle(ev Event) {
 			if t.media == "audio" {
 				label = ActRecording
 			}
+			t.pendingType = eventSlug(EvComposing, t.media)
 			t.addTimeline(ev.At, label)
 			t.log.Info("typing started", "contact", t.cfg.Name, "media", t.media)
 		}
@@ -666,6 +739,7 @@ func (t *Tracker) endSession(end time.Time, reason string) {
 	if reason != "message" {
 		// On "message" the incoming message itself is the timeline entry, and
 		// two lines one second apart would just be noise.
+		t.pendingType = "ha_smesso"
 		label := fmt.Sprintf("ha smesso di scrivere (%ds", int(d.Seconds()))
 		if t.lastPauses > 0 || t.lastRestarts > 0 {
 			label += ", " + countWord(t.lastPauses, "pausa", "pause") +
@@ -735,6 +809,10 @@ func (t *Tracker) snapshot() State {
 		LastReactionTarget:  t.lastReactionTarget,
 		LastEditAt:          t.lastEdit,
 		LastDeleteAt:        t.lastDelete,
+		LastEventType:       t.lastEventType,
+		LastEventText:       t.lastEventText,
+		LastEventAt:         t.lastEventTime,
+		EventSeq:            t.eventSeq,
 		Activity:            t.activityAt(time.Now()),
 		ActivitySince:       t.activitySince,
 		Timeline:            append([]TimelineEntry(nil), t.timeline...),

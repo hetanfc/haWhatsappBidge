@@ -12,6 +12,9 @@ Con `contact_name: Contatto` ottieni:
 
 | Entità | Cosa fa |
 |---|---|
+| `event.contatto_eventi` | **per le notifiche**: scatta a ogni evento, con `event_type` e `label` |
+| `sensor.contatto_last_event` | ultimo evento in chiaro |
+| `binary_sensor.contatto_bridge` | l'add-on è connesso. **L'unica entità che diventa non disponibile** |
 | `sensor.contatto_activity` | **il riassunto di tutto**: cosa sta succedendo adesso, con la cronologia negli attributi |
 | `binary_sensor.contatto_typing` | ON finché sta scrivendo. Porta gli attributi (media, inizio sessione, motivo di chiusura) |
 | `binary_sensor.contatto_online` | online/offline, se WhatsApp rende disponibile la presenza |
@@ -111,6 +114,56 @@ tipo, ora e didascalia, non il file. Tutte le righe vengono eliminate automatica
 `message_retention_days` (default 60). Se disattivi `store_message_content`, reazioni,
 risposte, modifiche ed eliminazioni continuano a essere rilevate, ma senza mostrare il testo
 precedente.
+
+## Notifiche sul telefono
+
+Con `mark_online: true` WhatsApp smette di notificarti sul telefono, quindi le notifiche te le
+manda Home Assistant. L'entità fatta apposta è **`event.contatto_eventi`**: scatta a ogni cosa
+che succede, comprese due identiche di fila — che un sensore normale non saprebbe distinguere,
+perché lo stato non cambierebbe.
+
+```yaml
+automation:
+  - alias: WhatsApp - notifica tutto
+    triggers:
+      - trigger: state
+        entity_id: event.contatto_eventi
+    conditions:
+      - condition: template
+        value_template: "{{ trigger.to_state.attributes.event_type is defined }}"
+    actions:
+      - action: notify.mobile_app_IL_TUO_TELEFONO
+        data:
+          title: Contatto
+          message: "{{ trigger.to_state.attributes.label }}"
+```
+
+Per farti avvisare **solo** quando inizia a scrivere e quando ti manda qualcosa, aggiungi una
+condizione sul tipo:
+
+```yaml
+      - condition: template
+        value_template: >
+          {{ trigger.to_state.attributes.event_type in
+             ['sta_scrivendo', 'registra_vocale', 'messaggio'] }}
+```
+
+I tipi disponibili: `sta_scrivendo`, `registra_vocale`, `ha_smesso`, `messaggio`, `consegnato`,
+`letto`, `riprodotto`, `reazione`, `modifica`, `eliminazione`, `presenza`.
+
+Gli eventi **non** vengono pubblicati come messaggi MQTT persistenti: un riavvio di Home
+Assistant non ti rispara addosso le notifiche di ieri.
+
+Se usi `publisher: ha` l'entità `event` non esiste: usa `sensor.contatto_last_event`, che cambia
+stato a ogni evento. Limite: due eventi identici di fila non fanno scattare l'automazione.
+
+## Perché le entità non diventano più "non disponibile"
+
+Prima ogni riavvio dell'add-on, e ogni riconnessione a WhatsApp, buttava tutte le entità su
+"Non disponibile", riempiendo la cronologia di buchi. Ora l'availability sta su una sola entità,
+`binary_sensor.contatto_bridge`: se vuoi sapere se il ponte è vivo guardi quella, e volendo ci
+metti sopra un avviso. Tutte le altre conservano l'ultimo valore noto, che dopo un riavvio viene
+ripreso dal database invece di ripartire da "Sconosciuto".
 
 ## Spunte: cosa vedi davvero
 

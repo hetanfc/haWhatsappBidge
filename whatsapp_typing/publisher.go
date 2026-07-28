@@ -19,23 +19,45 @@ type Publisher interface {
 // entity describes one Home Assistant entity, once, for both publishers:
 // MQTT uses Template against the JSON state topic, the REST publisher uses Value.
 type entity struct {
-	Key         string
-	Kind        string // binary_sensor | sensor
-	Name        string
-	Icon        string
-	DeviceClass string
-	StateClass  string
-	Unit        string
-	Attrs       bool // carries the shared attributes of the typing sensor
-	Timeline    bool // carries the readable history, published only when it changes
-	Template    string
-	Value       func(s State) string
+	Key          string
+	Kind         string // binary_sensor | sensor
+	Name         string
+	Icon         string
+	DeviceClass  string
+	StateClass   string
+	Unit         string
+	Attrs        bool // carries the shared attributes of the typing sensor
+	Timeline     bool // carries the readable history, published only when it changes
+	Availability bool // the only entity allowed to go unavailable (see entities())
+	Template     string
+	Value        func(s State) string
 }
 
 const unknown = "unknown"
 
+// Only the bridge entity carries an availability topic. Every other entity
+// keeps its last known value when the add-on stops or reconnects: an update
+// that takes a minute used to blank the whole device to "unavailable", which
+// buried the history in noise and told you nothing you couldn't read here.
 func entities() []entity {
 	return []entity{
+		{
+			Key: "bridge", Kind: "binary_sensor", Name: "Ponte connesso",
+			DeviceClass: "connectivity", Availability: true,
+			Template: "{{ value_json.bridge }}",
+			Value: func(s State) string {
+				if s.Available {
+					return "on"
+				}
+				return "off"
+			},
+		},
+		{
+			Key: "last_event", Kind: "sensor", Name: "Ultimo evento",
+			Icon:     "mdi:bell-ring-outline",
+			Template: "{{ value_json.last_event }}",
+			Value:    func(s State) string { return orUnknown(stateSafeLabel(s.LastEventText)) },
+		},
 		{
 			Key: "activity", Kind: "sensor", Name: "Attività",
 			Icon: "mdi:timeline-text-outline", Timeline: true,
@@ -350,9 +372,6 @@ func (p *HAPublisher) PublishState(s State) error {
 	for _, e := range entities() {
 		id := fmt.Sprintf("%s.%s_%s", e.Kind, p.cfg.Slug, e.Key)
 		state := e.Value(s)
-		if !s.Available {
-			state = "unavailable"
-		}
 		attrs := map[string]any{
 			"friendly_name": fmt.Sprintf("%s %s", p.cfg.Name, e.Name),
 		}

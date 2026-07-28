@@ -17,6 +17,7 @@ type MQTTPublisher struct {
 	base string
 
 	lastTimeline []byte // last published timeline, to skip identical republishes
+	lastEventSeq uint64 // last event fired, so each one fires exactly once
 }
 
 func NewMQTTPublisher(cfg Config, log *slog.Logger) (*MQTTPublisher, error) {
@@ -72,6 +73,7 @@ func NewMQTTPublisher(cfg Config, log *slog.Logger) (*MQTTPublisher, error) {
 func (p *MQTTPublisher) availabilityTopic() string { return p.base + "/availability" }
 func (p *MQTTPublisher) stateTopic() string        { return p.base + "/state" }
 func (p *MQTTPublisher) timelineTopic() string     { return p.base + "/timeline" }
+func (p *MQTTPublisher) eventTopic() string        { return p.base + "/event" }
 
 func (p *MQTTPublisher) device() map[string]any {
 	return map[string]any{
@@ -90,15 +92,17 @@ func (p *MQTTPublisher) publishDiscovery() error {
 			p.cfg.DiscoveryPrefix, e.Kind, p.cfg.Slug, e.Key)
 
 		payload := map[string]any{
-			"name":                  e.Name,
-			"unique_id":             uid,
-			"object_id":             fmt.Sprintf("%s_%s", p.cfg.Slug, e.Key),
-			"state_topic":           p.stateTopic(),
-			"value_template":        e.Template,
-			"availability_topic":    p.availabilityTopic(),
-			"payload_available":     "online",
-			"payload_not_available": "offline",
-			"device":                p.device(),
+			"name":           e.Name,
+			"unique_id":      uid,
+			"object_id":      fmt.Sprintf("%s_%s", p.cfg.Slug, e.Key),
+			"state_topic":    p.stateTopic(),
+			"value_template": e.Template,
+			"device":         p.device(),
+		}
+		if e.Availability {
+			payload["availability_topic"] = p.availabilityTopic()
+			payload["payload_available"] = "online"
+			payload["payload_not_available"] = "offline"
 		}
 		if e.Kind == "binary_sensor" {
 			payload["payload_on"] = "ON"
@@ -133,8 +137,33 @@ func (p *MQTTPublisher) publishDiscovery() error {
 			return err
 		}
 	}
-	p.log.Info("mqtt discovery published", "entities", len(entities()), "prefix", p.cfg.DiscoveryPrefix)
+	if err := p.publishEventDiscovery(); err != nil {
+		return err
+	}
+	p.log.Info("mqtt discovery published", "entities", len(entities())+1, "prefix", p.cfg.DiscoveryPrefix)
 	return nil
+}
+
+// publishEventDiscovery declares the event entity. Unlike a sensor it fires
+// even when two identical things happen in a row, which is what an automation
+// needs to notify on every single one.
+func (p *MQTTPublisher) publishEventDiscovery() error {
+	payload := map[string]any{
+		"name":        "Eventi",
+		"unique_id":   fmt.Sprintf("whatsapp_typing_%s_events", p.cfg.Slug),
+		"object_id":   fmt.Sprintf("%s_eventi", p.cfg.Slug),
+		"state_topic": p.eventTopic(),
+		"event_types": eventTypes(),
+		"icon":        "mdi:bell-ring-outline",
+		"device":      p.device(),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	topic := fmt.Sprintf("%s/event/whatsapp_typing_%s/events/config",
+		p.cfg.DiscoveryPrefix, p.cfg.Slug)
+	return p.publish(topic, body, true)
 }
 
 func (p *MQTTPublisher) PublishState(s State) error {
@@ -156,6 +185,24 @@ func (p *MQTTPublisher) PublishState(s State) error {
 		}
 		p.lastTimeline = timeline
 	}
+	if s.EventSeq != p.lastEventSeq && s.LastEventType != "" {
+		event, err := json.Marshal(map[string]any{
+			"event_type": s.LastEventType,
+			"label":      s.LastEventText,
+			"at":         timestamp(s.LastEventAt),
+		})
+		if err != nil {
+			return err
+		}
+		// Never retained: a retained event would fire again on every Home
+		// Assistant restart, and you would get a notification for something
+		// that happened yesterday.
+		if err := p.publish(p.eventTopic(), event, false); err != nil {
+			return err
+		}
+		p.lastEventSeq = s.EventSeq
+	}
+
 	avail := "offline"
 	if s.Available {
 		avail = "online"

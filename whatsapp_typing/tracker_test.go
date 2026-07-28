@@ -444,3 +444,61 @@ func TestReactionEmojiTellsRemovedFromUnknown(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestEverySingleEventIsFireable(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvRead, At: t0})
+	first := tr.snapshot()
+	// The very same thing happening twice must still be two events: a state
+	// value would not change, the sequence has to.
+	tr.handle(Event{Kind: EvRead, At: t0.Add(time.Minute)})
+	second := tr.snapshot()
+
+	if first.EventSeq == second.EventSeq {
+		t.Fatal("two identical events must produce two different sequences")
+	}
+	if second.LastEventType != "letto" {
+		t.Fatalf("expected the letto event type, got %q", second.LastEventType)
+	}
+	if second.LastEventText == "" {
+		t.Fatal("the event must carry its readable label")
+	}
+}
+
+func TestTypingEventsCarryTheirOwnType(t *testing.T) {
+	tr, _ := newTestTracker()
+	t0 := time.Now()
+
+	tr.handle(Event{Kind: EvComposing, Media: "audio", At: t0})
+	if got := tr.snapshot().LastEventType; got != "registra_vocale" {
+		t.Fatalf("recording should have its own event type, got %q", got)
+	}
+	tr.handle(Event{Kind: EvComposing, Media: "text", At: t0.Add(time.Second)})
+	tr.evaluate(t0.Add(time.Minute))
+	if got := tr.snapshot().LastEventType; got != "ha_smesso" {
+		t.Fatalf("the end of a session should fire ha_smesso, got %q", got)
+	}
+}
+
+func TestOnlyTheBridgeEntityCanGoUnavailable(t *testing.T) {
+	availability := 0
+	for _, e := range entities() {
+		if e.Availability {
+			availability++
+			if e.Key != "bridge" {
+				t.Fatalf("%s must not carry an availability topic", e.Key)
+			}
+		}
+	}
+	if availability != 1 {
+		t.Fatalf("exactly one entity should report availability, got %d", availability)
+	}
+	// With the link down every other entity keeps a real value.
+	for _, e := range entities() {
+		if v := e.Value(State{}); v == "unavailable" {
+			t.Fatalf("%s reports unavailable as a state", e.Key)
+		}
+	}
+}

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.0
+
+- Basta "Non disponibile" a ogni riavvio: l'availability resta solo su una nuova entità
+  dedicata, `binary_sensor.<contatto>_bridge`. Tutte le altre conservano l'ultimo valore
+- Nuova entità `event.<contatto>_eventi`, pensata per far scattare le notifiche: emette un
+  evento a ogni cosa che succede, anche due identiche di fila, con `event_type` e `label`
+- Nuovo `sensor.<contatto>_last_event` con l'ultimo evento in chiaro, per chi usa `publisher: ha`
+- L'ultimo evento sopravvive al riavvio, ma il contatore no: nessuna notifica di eventi vecchi
+  quando l'add-on riparte
+
 ## 1.5.0
 
 - Lo stato conosciuto sopravvive ai riavvii: le entità non tornano più a "Sconosciuto" e gli

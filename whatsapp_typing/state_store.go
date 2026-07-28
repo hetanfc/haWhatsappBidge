@@ -56,6 +56,13 @@ type durableState struct {
 	LastEdit           time.Time `json:"last_edit"`
 	LastDelete         time.Time `json:"last_delete"`
 
+	// The last event is kept for display only. EventSeq deliberately is not:
+	// restoring it would make the publisher fire the restored event on startup
+	// and notify you about something that happened before the restart.
+	LastEventType string    `json:"last_event_type"`
+	LastEventText string    `json:"last_event_text"`
+	LastEventTime time.Time `json:"last_event_time"`
+
 	Timeline []TimelineEntry `json:"timeline"`
 }
 

@@ -112,7 +112,8 @@ func (g *GianniRelay) Start(ctx context.Context) error {
 		return fmt.Errorf("subscribe to %s: %w", g.cfg.GianniTopicOut, err)
 	}
 	go g.run(ctx)
-	g.log.Info("Gianni relay enabled", "mention", g.cfg.GianniMention,
+	g.log.Info("AI relay enabled", "gianni_mention", g.cfg.GianniMention,
+		"gianna_mention", g.cfg.GiannaMention,
 		"inbox", g.cfg.GianniTopicIn, "outbox", g.cfg.GianniTopicOut)
 	return nil
 }
@@ -131,7 +132,7 @@ func (g *GianniRelay) run(ctx context.Context) {
 }
 
 func (g *GianniRelay) Forward(evt *events.Message, text string, at time.Time) {
-	if evt == nil || !containsMention(text, g.cfg.GianniMention) {
+	if evt == nil || !containsAnyMention(text, g.cfg.GianniMention, g.cfg.GiannaMention) {
 		return
 	}
 
@@ -178,7 +179,7 @@ func (g *GianniRelay) Forward(evt *events.Message, text string, at time.Time) {
 		g.log.Error("Gianni inbound publish failed", "message_id", in.MessageID, "err", err)
 		return
 	}
-	g.log.Info("message forwarded to Gianni", "message_id", in.MessageID, "sender", senderRole)
+	g.log.Info("message forwarded to AI bridge", "message_id", in.MessageID, "sender", senderRole)
 }
 
 func (g *GianniRelay) deliver(ctx context.Context, payload []byte) error {
@@ -186,8 +187,8 @@ func (g *GianniRelay) deliver(ctx context.Context, payload []byte) error {
 	if err := json.Unmarshal(payload, &out); err != nil {
 		return fmt.Errorf("invalid Gianni JSON: %w", err)
 	}
-	if out.Version != 1 || out.Sender != "gianni" || !out.BotGenerated {
-		return fmt.Errorf("untrusted Gianni response")
+	if out.Version != 1 || !isTrustedAgentSender(out.Sender) || !out.BotGenerated {
+		return fmt.Errorf("untrusted AI response")
 	}
 	if out.ResponseID == "" || out.ChatID != g.wa.target.String() {
 		return fmt.Errorf("Gianni response is for another chat")
@@ -287,6 +288,19 @@ func (g *GianniRelay) sendImage(ctx context.Context, source, caption string) err
 
 func containsMention(text, mention string) bool {
 	return strings.Contains(strings.ToLower(text), strings.ToLower(mention))
+}
+
+func containsAnyMention(text string, mentions ...string) bool {
+	for _, mention := range mentions {
+		if containsMention(text, mention) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTrustedAgentSender(sender string) bool {
+	return sender == "gianni" || sender == "gianna"
 }
 
 func (g *GianniRelay) markSentByBot(id string) {

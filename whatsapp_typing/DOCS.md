@@ -6,20 +6,23 @@ Sensore Home Assistant che segue l'attività di **un singolo contatto** nella ch
 Si collega a WhatsApp come **dispositivo collegato** (esattamente come WhatsApp Web) usando
 [whatsmeow](https://github.com/tulir/whatsmeow), e pubblica su Home Assistant via **MQTT discovery**.
 
-## Gianni: assistente nella chat
+## Gianni e Gianna: assistenti nella chat
 
 Con `gianni_enabled: true`, sia il proprietario del numero sia il contatto configurato possono
-chiamare Gianni scrivendo `@gianni` in qualsiasi punto del messaggio. Per esempio:
+chiamare Gianni con `@gianni` oppure Gianna con `@gianna` in qualsiasi punto del messaggio.
+I due agenti usano lo stesso relay MQTT, ma GianniBridge mantiene identità, stile, sessione
+Claude e memoria automatica separati. Per esempio:
 
 ```text
 Che tempo farÃ  domani, @gianni?
 @gianni controlla la lista della spesa
 Puoi accendere la luce, @gianni?
+@gianna riassumi gli ultimi eventi
 ```
 
 L'add-on inoltra la richiesta a `GianniBridge` tramite MQTT e rimanda nella stessa chat la
-risposta prodotta da Claude. Le risposte arrivano gia marcate come Gianni, ad esempio
-`🤖 _testo della risposta_`, e non vengono inoltrate di nuovo al bridge.
+risposta prodotta da Claude. Le risposte arrivano già marcate come Gianni (`🤖 _..._`) o
+Gianna (`👩‍💻 _..._`) e non vengono inoltrate di nuovo al bridge.
 
 Sono supportate tre risposte:
 
@@ -335,8 +338,9 @@ Il primo avvio mostra codice o QR nei log. Il DB della sessione finisce in `./da
 | `store_message_content` | `WT_STORE_MESSAGE_CONTENT` | `true` | Conserva testo/didascalia per mostrare modifiche ed eliminazioni |
 | `message_retention_days` | `WT_MESSAGE_RETENTION_DAYS` | `60` | Giorni di conservazione dell'archivio della chat |
 | `publisher` | `WT_PUBLISHER` | `mqtt` | `mqtt` o `ha` |
-| `gianni_enabled` | `WT_GIANNI_ENABLED` | `true` | Abilita le richieste `@gianni` nella chat configurata |
+| `gianni_enabled` | `WT_GIANNI_ENABLED` | `true` | Abilita il relay per `@gianni` e `@gianna` nella chat configurata |
 | `gianni_mention` | `WT_GIANNI_MENTION` | `@gianni` | Menzione rilevata senza distinzione fra maiuscole e minuscole |
+| `gianna_mention` | `WT_GIANNA_MENTION` | `@gianna` | Menzione di Gianna rilevata senza distinzione fra maiuscole e minuscole |
 | `gianni_topic_in` | `WT_GIANNI_TOPIC_IN` | `gianni/inbox` | Topic MQTT verso GianniBridge |
 | `gianni_topic_out` | `WT_GIANNI_TOPIC_OUT` | `gianni/outbox` | Topic MQTT delle risposte |
 | `gianni_image_max_mb` | `WT_GIANNI_IMAGE_MAX_MB` | `15` | Dimensione massima delle immagini inviate |

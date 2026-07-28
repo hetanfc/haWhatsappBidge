@@ -19,3 +19,33 @@ func TestContainsMentionAnywhere(t *testing.T) {
 		}
 	}
 }
+
+func TestContainsEitherAgentMention(t *testing.T) {
+	tests := []struct {
+		text string
+		want bool
+	}{
+		{"@gianni spiegami questa cosa", true},
+		{"Che ne pensi @gianna?", true},
+		{"Ehi @GIANNA, ci sei?", true},
+		{"messaggio senza agenti", false},
+	}
+	for _, tt := range tests {
+		if got := containsAnyMention(tt.text, "@gianni", "@gianna"); got != tt.want {
+			t.Errorf("containsAnyMention(%q) = %v, want %v", tt.text, got, tt.want)
+		}
+	}
+}
+
+func TestTrustedAgentSender(t *testing.T) {
+	for _, sender := range []string{"gianni", "gianna"} {
+		if !isTrustedAgentSender(sender) {
+			t.Errorf("expected %q to be trusted", sender)
+		}
+	}
+	for _, sender := range []string{"", "proprietario", "Gianna", "attacker"} {
+		if isTrustedAgentSender(sender) {
+			t.Errorf("expected %q to be rejected", sender)
+		}
+	}
+}

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.0
+
+- Aggiunto `@gianna` allo stesso relay MQTT usato da Gianni.
+- Il relay inoltra entrambe le menzioni e accetta risposte firmate `gianni` o `gianna`.
+- Aggiunta l'opzione `gianna_mention`, con valore predefinito `@gianna`.
+
 ## 1.7.0
 
 - Aggiunto il relay MQTT per chiamare Gianni con `@gianni` dalla chat configurata.

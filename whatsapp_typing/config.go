@@ -43,6 +43,7 @@ type Config struct {
 
 	GianniEnabled    bool
 	GianniMention    string
+	GiannaMention    string
 	GianniTopicIn    string
 	GianniTopicOut   string
 	GianniImageMaxMB int
@@ -87,6 +88,7 @@ func LoadConfig() (Config, error) {
 		HAToken:             env("HA_TOKEN", ""),
 		GianniEnabled:       envBool("WT_GIANNI_ENABLED", true),
 		GianniMention:       env("WT_GIANNI_MENTION", "@gianni"),
+		GiannaMention:       env("WT_GIANNA_MENTION", "@gianna"),
 		GianniTopicIn:       env("WT_GIANNI_TOPIC_IN", "gianni/inbox"),
 		GianniTopicOut:      env("WT_GIANNI_TOPIC_OUT", "gianni/outbox"),
 		GianniImageMaxMB:    envInt("WT_GIANNI_IMAGE_MAX_MB", 15),
@@ -136,6 +138,12 @@ func LoadConfig() (Config, error) {
 		}
 		if !strings.HasPrefix(cfg.GianniMention, "@") || len(cfg.GianniMention) < 2 {
 			return cfg, fmt.Errorf("WT_GIANNI_MENTION must start with @")
+		}
+		if !strings.HasPrefix(cfg.GiannaMention, "@") || len(cfg.GiannaMention) < 2 {
+			return cfg, fmt.Errorf("WT_GIANNA_MENTION must start with @")
+		}
+		if strings.EqualFold(cfg.GianniMention, cfg.GiannaMention) {
+			return cfg, fmt.Errorf("Gianni and Gianna mentions must differ")
 		}
 		if cfg.GianniTopicIn == "" || cfg.GianniTopicOut == "" {
 			return cfg, fmt.Errorf("Gianni MQTT topics cannot be empty")

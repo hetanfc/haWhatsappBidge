@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.0
+
+- Aggiunto `binary_sensor.<contatto>_mark_online`, che espone in Home Assistant il valore
+  effettivo dell'opzione `mark_online`.
+- Il nuovo sensore può essere usato direttamente come condizione nelle automazioni di notifica.
+
 ## 1.8.0
 
 - Aggiunto `@gianna` allo stesso relay MQTT usato da Gianni.

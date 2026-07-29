@@ -59,6 +59,7 @@ type TimelineEntry struct {
 // State is the snapshot handed to the publisher.
 type State struct {
 	Available           bool
+	MarkOnline          bool
 	Typing              bool
 	Status              string // idle | typing | recording | disconnected
 	CurrentDuration     int    // seconds in the running session, 0 when idle
@@ -782,6 +783,7 @@ func (t *Tracker) snapshot() State {
 
 	s := State{
 		Available:           t.available(time.Now()),
+		MarkOnline:          t.cfg.MarkOnline,
 		Typing:              t.typing,
 		LastDuration:        int(t.lastDuration.Seconds()),
 		LastTypingAt:        t.lastTypingAt,

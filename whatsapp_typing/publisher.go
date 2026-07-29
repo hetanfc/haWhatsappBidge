@@ -53,6 +53,17 @@ func entities() []entity {
 			},
 		},
 		{
+			Key: "mark_online", Kind: "binary_sensor", Name: "Mark online attivo",
+			Icon:     "mdi:account-eye",
+			Template: "{{ value_json.mark_online }}",
+			Value: func(s State) string {
+				if s.MarkOnline {
+					return "on"
+				}
+				return "off"
+			},
+		},
+		{
 			Key: "last_event", Kind: "sensor", Name: "Ultimo evento",
 			Icon:     "mdi:bell-ring-outline",
 			Template: "{{ value_json.last_event }}",
@@ -298,7 +309,12 @@ func statePayload(s State) ([]byte, error) {
 			online = "ON"
 		}
 	}
+	markOnline := "OFF"
+	if s.MarkOnline {
+		markOnline = "ON"
+	}
 	return json.Marshal(map[string]any{
+		"mark_online":          markOnline,
 		"typing":               typing,
 		"online":               online,
 		"last_seen":            timestamp(s.LastSeenAt),

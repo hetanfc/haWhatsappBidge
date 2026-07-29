@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log/slog"
 	"testing"
 	"time"
@@ -500,5 +501,46 @@ func TestOnlyTheBridgeEntityCanGoUnavailable(t *testing.T) {
 		if v := e.Value(State{}); v == "unavailable" {
 			t.Fatalf("%s reports unavailable as a state", e.Key)
 		}
+	}
+}
+
+func TestMarkOnlineOptionIsExposed(t *testing.T) {
+	tr, _ := newTestTracker()
+	tr.cfg.MarkOnline = true
+	state := tr.snapshot()
+	if !state.MarkOnline {
+		t.Fatal("snapshot must expose mark_online=true")
+	}
+
+	var markOnline *entity
+	for _, candidate := range entities() {
+		if candidate.Key == "mark_online" {
+			value := candidate
+			markOnline = &value
+			break
+		}
+	}
+	if markOnline == nil {
+		t.Fatal("mark_online entity is missing")
+	}
+	if got := markOnline.Value(state); got != "on" {
+		t.Fatalf("expected mark_online entity on, got %q", got)
+	}
+
+	payload, err := statePayload(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got := decoded["mark_online"]; got != "ON" {
+		t.Fatalf("expected MQTT mark_online ON, got %#v", got)
+	}
+
+	tr.cfg.MarkOnline = false
+	if got := markOnline.Value(tr.snapshot()); got != "off" {
+		t.Fatalf("expected mark_online entity off, got %q", got)
 	}
 }

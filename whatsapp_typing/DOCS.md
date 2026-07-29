@@ -43,6 +43,7 @@ Con `contact_name: Contatto` ottieni:
 | `event.contatto_eventi` | **per le notifiche**: scatta a ogni evento, con `event_type` e `label` |
 | `sensor.contatto_last_event` | ultimo evento in chiaro |
 | `binary_sensor.contatto_bridge` | l'add-on è connesso. **L'unica entità che diventa non disponibile** |
+| `binary_sensor.contatto_mark_online` | ON quando l'opzione `mark_online` è attiva, OFF quando è disattiva |
 | `sensor.contatto_activity` | **il riassunto di tutto**: cosa sta succedendo adesso, con la cronologia negli attributi |
 | `binary_sensor.contatto_typing` | ON finché sta scrivendo. Porta gli attributi (media, inizio sessione, motivo di chiusura) |
 | `binary_sensor.contatto_online` | online/offline, se WhatsApp rende disponibile la presenza |
@@ -157,6 +158,9 @@ automation:
       - trigger: state
         entity_id: event.contatto_eventi
     conditions:
+      - condition: state
+        entity_id: binary_sensor.contatto_mark_online
+        state: "on"
       - condition: template
         value_template: "{{ trigger.to_state.attributes.event_type is defined }}"
     actions:
@@ -165,6 +169,11 @@ automation:
           title: Contatto
           message: "{{ trigger.to_state.attributes.label }}"
 ```
+
+`binary_sensor.contatto_mark_online` riflette la configurazione effettivamente caricata
+dall'add-on. Puoi quindi usare `state: "on"` per inviare la notifica sostitutiva quando
+`mark_online` è attivo, oppure `state: "off"` se la tua automazione deve funzionare nel caso
+opposto. Il valore cambia dopo il riavvio dell'add-on conseguente alla modifica dell'opzione.
 
 Per farti avvisare **solo** quando inizia a scrivere e quando ti manda qualcosa, aggiungi una
 condizione sul tipo:

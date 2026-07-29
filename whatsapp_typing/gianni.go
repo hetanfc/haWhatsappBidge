@@ -20,14 +20,24 @@ import (
 )
 
 type gianniInbound struct {
-	Version          int    `json:"version"`
+	Version          int                   `json:"version"`
+	MessageID        string                `json:"message_id"`
+	ChatID           string                `json:"chat_id"`
+	SenderID         string                `json:"sender_id"`
+	SenderRole       string                `json:"sender_role"`
+	SenderName       string                `json:"sender_name"`
+	FromMe           bool                  `json:"from_me"`
+	BotGenerated     bool                  `json:"bot_generated"`
+	Text             string                `json:"text"`
+	Timestamp        string                `json:"timestamp"`
+	ReplyToMessageID string                `json:"reply_to_message_id,omitempty"`
+	RecentMessages   []gianniRecentMessage `json:"recent_messages,omitempty"`
+}
+
+type gianniRecentMessage struct {
 	MessageID        string `json:"message_id"`
-	ChatID           string `json:"chat_id"`
-	SenderID         string `json:"sender_id"`
 	SenderRole       string `json:"sender_role"`
 	SenderName       string `json:"sender_name"`
-	FromMe           bool   `json:"from_me"`
-	BotGenerated     bool   `json:"bot_generated"`
 	Text             string `json:"text"`
 	Timestamp        string `json:"timestamp"`
 	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
@@ -152,10 +162,11 @@ func (g *GianniRelay) run(ctx context.Context) {
 }
 
 func (g *GianniRelay) Forward(evt *events.Message, text string, at time.Time) {
-	if evt == nil || !containsAnyMention(text, g.cfg.GianniMention, g.cfg.GiannaMention) {
+	if evt == nil {
 		return
 	}
 
+	hasMention := containsAnyMention(text, g.cfg.GianniMention, g.cfg.GiannaMention)
 	senderID := evt.Info.Sender.String()
 	senderRole := "contact"
 	senderName := g.cfg.Name
@@ -184,6 +195,39 @@ func (g *GianniRelay) Forward(evt *events.Message, text string, at time.Time) {
 	}
 	if in.BotGenerated {
 		return
+	}
+	if !hasMention {
+		return
+	}
+	if g.cfg.GianniContextEnabled && g.wa.archive != nil {
+		recent := g.wa.archive.recentBefore(
+			context.Background(),
+			in.MessageID,
+			at,
+			time.Duration(g.cfg.GianniContextHours)*time.Hour,
+			g.cfg.GianniContextMaxMessages,
+			64_000,
+		)
+		in.RecentMessages = make([]gianniRecentMessage, 0, len(recent))
+		for _, message := range recent {
+			role := "contact"
+			name := g.cfg.Name
+			if message.AgentSender == "gianni" {
+				role, name = "agent", "Gianni"
+			} else if message.AgentSender == "gianna" {
+				role, name = "agent", "Gianna"
+			} else if message.FromMe {
+				role, name = "owner", "Proprietario"
+			}
+			in.RecentMessages = append(in.RecentMessages, gianniRecentMessage{
+				MessageID:        message.ID,
+				SenderRole:       role,
+				SenderName:       name,
+				Text:             message.Text,
+				Timestamp:        message.At.Format(time.RFC3339),
+				ReplyToMessageID: message.QuotedID,
+			})
+		}
 	}
 	body, err := json.Marshal(in)
 	if err != nil {
@@ -249,7 +293,13 @@ func (g *GianniRelay) sendAcknowledgement(in gianniInbound) {
 	text := acknowledgementText(
 		in, state, mode, g.cfg.GianniMention, g.cfg.GiannaMention,
 	)
-	if err := g.send(ctx, &waE2E.Message{Conversation: proto.String(text)}, "ricevuta AI"); err != nil {
+	if err := g.send(
+		ctx,
+		&waE2E.Message{Conversation: proto.String(text)},
+		"ricevuta AI",
+		text,
+		"ack",
+	); err != nil {
 		g.log.Warn("Gianni acknowledgement failed", "err", err)
 	}
 }
@@ -277,7 +327,13 @@ func (g *GianniRelay) deliver(ctx context.Context, payload []byte) error {
 		if strings.TrimSpace(out.Text) == "" {
 			return fmt.Errorf("empty text response")
 		}
-		return g.send(ctx, &waE2E.Message{Conversation: proto.String(out.Text)}, "testo")
+		return g.send(
+			ctx,
+			&waE2E.Message{Conversation: proto.String(out.Text)},
+			"testo",
+			out.Text,
+			out.Sender,
+		)
 	case "location":
 		if out.Latitude < -90 || out.Latitude > 90 || out.Longitude < -180 || out.Longitude > 180 {
 			return fmt.Errorf("invalid location coordinates")
@@ -288,15 +344,27 @@ func (g *GianniRelay) deliver(ctx context.Context, payload []byte) error {
 			Name:             proto.String(out.Name),
 			Comment:          proto.String(out.Text),
 		}
-		return g.send(ctx, &waE2E.Message{LocationMessage: msg}, "posizione")
+		return g.send(
+			ctx,
+			&waE2E.Message{LocationMessage: msg},
+			"posizione",
+			strings.TrimSpace(strings.Join([]string{out.Name, out.Text}, " ")),
+			out.Sender,
+		)
 	case "image":
-		return g.sendImage(ctx, out.Source, out.Caption)
+		return g.sendImage(ctx, out.Source, out.Caption, out.Sender)
 	default:
 		return fmt.Errorf("unsupported Gianni response type %q", out.Type)
 	}
 }
 
-func (g *GianniRelay) send(ctx context.Context, msg *waE2E.Message, kind string) error {
+func (g *GianniRelay) send(
+	ctx context.Context,
+	msg *waE2E.Message,
+	kind string,
+	contextText string,
+	agentSender string,
+) error {
 	resp, err := g.wa.cli.SendMessage(ctx, g.wa.target, msg)
 	if err != nil {
 		return err
@@ -304,11 +372,21 @@ func (g *GianniRelay) send(ctx context.Context, msg *waE2E.Message, kind string)
 	id := string(resp.ID)
 	g.markSentByBot(id)
 	g.wa.sent.add(ctx, id, resp.Timestamp, kind)
+	if g.wa.archive != nil {
+		g.wa.archive.markAgentMessage(
+			ctx,
+			id,
+			resp.Timestamp,
+			kind,
+			contextText,
+			agentSender,
+		)
+	}
 	g.log.Info("Gianni response sent to WhatsApp", "response_message_id", id, "kind", kind)
 	return nil
 }
 
-func (g *GianniRelay) sendImage(ctx context.Context, source, caption string) error {
+func (g *GianniRelay) sendImage(ctx context.Context, source, caption, agentSender string) error {
 	parsed, err := url.Parse(source)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return fmt.Errorf("Gianni image source must be an HTTP(S) URL")
@@ -355,7 +433,7 @@ func (g *GianniRelay) sendImage(ctx context.Context, source, caption string) err
 		FileLength:    proto.Uint64(uploaded.FileLength),
 		Caption:       proto.String(caption),
 	}
-	return g.send(ctx, &waE2E.Message{ImageMessage: msg}, "foto")
+	return g.send(ctx, &waE2E.Message{ImageMessage: msg}, "foto", caption, agentSender)
 }
 
 func containsMention(text, mention string) bool {

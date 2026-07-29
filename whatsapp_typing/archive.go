@@ -20,18 +20,19 @@ type messageArchive struct {
 }
 
 type archivedMessage struct {
-	ID        string
-	At        time.Time
-	Kind      string
-	Text      string
-	FromMe    bool
-	QuotedID  string
-	Ephemeral bool
-	ViewOnce  bool
-	Forwarded bool
-	Duration  int
-	EditedAt  time.Time
-	DeletedAt time.Time
+	ID          string
+	At          time.Time
+	Kind        string
+	Text        string
+	FromMe      bool
+	AgentSender string
+	QuotedID    string
+	Ephemeral   bool
+	ViewOnce    bool
+	Forwarded   bool
+	Duration    int
+	EditedAt    time.Time
+	DeletedAt   time.Time
 }
 
 func newMessageArchive(ctx context.Context, db *sql.DB, log logger, retention time.Duration) (*messageArchive, error) {
@@ -42,6 +43,7 @@ func newMessageArchive(ctx context.Context, db *sql.DB, log logger, retention ti
 			kind       TEXT NOT NULL,
 			text       TEXT NOT NULL DEFAULT '',
 			from_me    INTEGER NOT NULL DEFAULT 0,
+			agent_sender TEXT NOT NULL DEFAULT '',
 			quoted_id  TEXT NOT NULL DEFAULT '',
 			ephemeral  INTEGER NOT NULL DEFAULT 0,
 			view_once  INTEGER NOT NULL DEFAULT 0,
@@ -70,6 +72,11 @@ func newMessageArchive(ctx context.Context, db *sql.DB, log logger, retention ti
 			return nil, fmt.Errorf("create message archive tables: %w", err)
 		}
 	}
+	if _, err := db.ExecContext(ctx,
+		`ALTER TABLE wt_messages ADD COLUMN agent_sender TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return nil, fmt.Errorf("add agent sender to message archive: %w", err)
+	}
 	// Preserve the message labels collected by versions before 1.4.0. The old
 	// table only knew our outgoing ID/time/type, but that is still enough to
 	// identify a reaction to one of those messages after the upgrade.
@@ -85,11 +92,11 @@ func (a *messageArchive) add(ctx context.Context, m archivedMessage) {
 		return
 	}
 	_, err := a.db.ExecContext(ctx, `INSERT INTO wt_messages
-		(id, at, kind, text, from_me, quoted_id, ephemeral, view_once, forwarded,
+		(id, at, kind, text, from_me, agent_sender, quoted_id, ephemeral, view_once, forwarded,
 		 duration, edited_at, deleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING`,
-		m.ID, m.At.Unix(), m.Kind, m.Text, boolInt(m.FromMe), m.QuotedID,
+		m.ID, m.At.Unix(), m.Kind, m.Text, boolInt(m.FromMe), m.AgentSender, m.QuotedID,
 		boolInt(m.Ephemeral), boolInt(m.ViewOnce), boolInt(m.Forwarded), m.Duration,
 		timeMillis(m.EditedAt), timeMillis(m.DeletedAt))
 	if err != nil {
@@ -104,10 +111,10 @@ func (a *messageArchive) get(ctx context.Context, id string) (archivedMessage, b
 	var m archivedMessage
 	var unix, edited, deleted int64
 	var fromMe, ephemeral, viewOnce, forwarded int
-	err := a.db.QueryRowContext(ctx, `SELECT id, at, kind, text, from_me, quoted_id,
+	err := a.db.QueryRowContext(ctx, `SELECT id, at, kind, text, from_me, agent_sender, quoted_id,
 		ephemeral, view_once, forwarded, duration, edited_at, deleted_at
 		FROM wt_messages WHERE id = ?`, id).
-		Scan(&m.ID, &unix, &m.Kind, &m.Text, &fromMe, &m.QuotedID,
+		Scan(&m.ID, &unix, &m.Kind, &m.Text, &fromMe, &m.AgentSender, &m.QuotedID,
 			&ephemeral, &viewOnce, &forwarded, &m.Duration, &edited, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return archivedMessage{}, false
@@ -128,6 +135,93 @@ func (a *messageArchive) get(ctx context.Context, id string) (archivedMessage, b
 		m.DeletedAt = time.UnixMilli(deleted)
 	}
 	return m, true
+}
+
+func (a *messageArchive) markAgentMessage(
+	ctx context.Context,
+	id string,
+	at time.Time,
+	kind string,
+	text string,
+	agent string,
+) {
+	if id == "" || agent == "" {
+		return
+	}
+	_, err := a.db.ExecContext(ctx, `INSERT INTO wt_messages
+		(id, at, kind, text, from_me, agent_sender)
+		VALUES (?, ?, ?, ?, 1, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			agent_sender = excluded.agent_sender,
+			text = CASE WHEN excluded.text <> '' THEN excluded.text ELSE wt_messages.text END`,
+		id, at.Unix(), kind, text, agent)
+	if err != nil {
+		a.log.Warn("could not mark agent message", "id", id, "agent", agent, "err", err)
+	}
+}
+
+func (a *messageArchive) recentBefore(
+	ctx context.Context,
+	currentID string,
+	at time.Time,
+	window time.Duration,
+	limit int,
+	maxChars int,
+) []archivedMessage {
+	if limit < 1 || maxChars < 1 {
+		return nil
+	}
+	rows, err := a.db.QueryContext(ctx, `SELECT id, at, kind, text, from_me, agent_sender,
+		quoted_id, ephemeral, view_once, forwarded, duration, edited_at, deleted_at
+		FROM wt_messages
+		WHERE id <> ? AND at <= ? AND at >= ? AND deleted_at = 0
+		  AND trim(text) <> '' AND agent_sender <> 'ack'
+		ORDER BY at DESC, rowid DESC
+		LIMIT ?`,
+		currentID, at.Unix(), at.Add(-window).Unix(), limit)
+	if err != nil {
+		a.log.Warn("recent message lookup failed", "err", err)
+		return nil
+	}
+	defer rows.Close()
+
+	messages := make([]archivedMessage, 0, limit)
+	remaining := maxChars
+	for rows.Next() {
+		var m archivedMessage
+		var unix, edited, deleted int64
+		var fromMe, ephemeral, viewOnce, forwarded int
+		if err := rows.Scan(
+			&m.ID, &unix, &m.Kind, &m.Text, &fromMe, &m.AgentSender,
+			&m.QuotedID, &ephemeral, &viewOnce, &forwarded, &m.Duration,
+			&edited, &deleted,
+		); err != nil {
+			a.log.Warn("recent message scan failed", "err", err)
+			break
+		}
+		runes := []rune(strings.Join(strings.Fields(m.Text), " "))
+		if len(runes) > remaining {
+			runes = runes[:remaining]
+		}
+		m.Text = string(runes)
+		if m.Text == "" {
+			break
+		}
+		m.At = time.Unix(unix, 0)
+		m.FromMe = fromMe != 0
+		m.Ephemeral = ephemeral != 0
+		m.ViewOnce = viewOnce != 0
+		m.Forwarded = forwarded != 0
+		messages = append(messages, m)
+		remaining -= len(runes)
+		if remaining <= 0 {
+			break
+		}
+	}
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
+	return messages
 }
 
 // edit stores the previous revision before replacing it. The returned message

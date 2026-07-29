@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.11.0
+
+- Aggiunge alle richieste per Gianni e Gianna il contesto recente della chat autorizzata,
+  recuperato dall'archivio locale già esistente.
+- Conserva autore, orario e risposta citata; distingue Proprietario, Contatto, Gianni e Gianna ed
+  esclude le conferme automatiche `Ricevuto`.
+- Introduce opzioni per abilitazione, finestra temporale e numero massimo di messaggi
+  candidati. Il bridge seleziona poi soltanto quelli realmente pertinenti.
+
 ## 1.10.0
 
 - Conferma immediata WhatsApp con 👽 quando una richiesta per Gianni o Gianna viene inoltrata.

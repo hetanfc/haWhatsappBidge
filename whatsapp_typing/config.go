@@ -41,14 +41,17 @@ type Config struct {
 	HAURL           string
 	HAToken         string
 
-	GianniEnabled     bool
-	GianniMention     string
-	GiannaMention     string
-	GianniTopicIn     string
-	GianniTopicOut    string
-	GianniTopicStatus string
-	GianniAckEnabled  bool
-	GianniImageMaxMB  int
+	GianniEnabled            bool
+	GianniMention            string
+	GiannaMention            string
+	GianniTopicIn            string
+	GianniTopicOut           string
+	GianniTopicStatus        string
+	GianniAckEnabled         bool
+	GianniImageMaxMB         int
+	GianniContextEnabled     bool
+	GianniContextHours       int
+	GianniContextMaxMessages int
 
 	LogLevel slog.Level
 }
@@ -70,33 +73,36 @@ var (
 
 func LoadConfig() (Config, error) {
 	cfg := Config{
-		Phone:               strings.TrimPrefix(strings.TrimSpace(env("WT_PHONE", "")), "+"),
-		JIDOverride:         strings.TrimSpace(env("WT_JID", "")),
-		Name:                env("WT_NAME", "Contatto"),
-		ComposingTimeout:    envDur("WT_COMPOSING_TIMEOUT", 20*time.Second),
-		OffDelay:            envDur("WT_OFF_DELAY", 3*time.Second),
-		Tick:                envDur("WT_TICK", 2*time.Second),
-		ActivitySticky:      envDur("WT_ACTIVITY_STICKY", 30*time.Second),
-		AvailabilityGrace:   envDur("WT_AVAILABILITY_GRACE", 2*time.Minute),
-		MarkOnline:          envBool("WT_MARK_ONLINE", true),
-		PushName:            env("WT_PUSH_NAME", "Home Assistant"),
-		PairPhone:           strings.TrimPrefix(strings.TrimSpace(env("WT_PAIR_PHONE", "")), "+"),
-		DBPath:              env("WT_DB_PATH", "/data/whatsapp.db"),
-		StoreMessageContent: envBool("WT_STORE_MESSAGE_CONTENT", true),
-		MessageRetention:    time.Duration(envInt("WT_MESSAGE_RETENTION_DAYS", 60)) * 24 * time.Hour,
-		Publisher:           strings.ToLower(env("WT_PUBLISHER", "mqtt")),
-		DiscoveryPrefix:     env("WT_DISCOVERY_PREFIX", "homeassistant"),
-		HAURL:               strings.TrimSuffix(env("HA_URL", ""), "/"),
-		HAToken:             env("HA_TOKEN", ""),
-		GianniEnabled:       envBool("WT_GIANNI_ENABLED", true),
-		GianniMention:       env("WT_GIANNI_MENTION", "@gianni"),
-		GiannaMention:       env("WT_GIANNA_MENTION", "@gianna"),
-		GianniTopicIn:       env("WT_GIANNI_TOPIC_IN", "gianni/inbox"),
-		GianniTopicOut:      env("WT_GIANNI_TOPIC_OUT", "gianni/outbox"),
-		GianniTopicStatus:   env("WT_GIANNI_TOPIC_STATUS", "gianni/status"),
-		GianniAckEnabled:    envBool("WT_GIANNI_ACK_ENABLED", true),
-		GianniImageMaxMB:    envInt("WT_GIANNI_IMAGE_MAX_MB", 15),
-		LogLevel:            envLevel("WT_LOG_LEVEL", slog.LevelInfo),
+		Phone:                    strings.TrimPrefix(strings.TrimSpace(env("WT_PHONE", "")), "+"),
+		JIDOverride:              strings.TrimSpace(env("WT_JID", "")),
+		Name:                     env("WT_NAME", "Contatto"),
+		ComposingTimeout:         envDur("WT_COMPOSING_TIMEOUT", 20*time.Second),
+		OffDelay:                 envDur("WT_OFF_DELAY", 3*time.Second),
+		Tick:                     envDur("WT_TICK", 2*time.Second),
+		ActivitySticky:           envDur("WT_ACTIVITY_STICKY", 30*time.Second),
+		AvailabilityGrace:        envDur("WT_AVAILABILITY_GRACE", 2*time.Minute),
+		MarkOnline:               envBool("WT_MARK_ONLINE", true),
+		PushName:                 env("WT_PUSH_NAME", "Home Assistant"),
+		PairPhone:                strings.TrimPrefix(strings.TrimSpace(env("WT_PAIR_PHONE", "")), "+"),
+		DBPath:                   env("WT_DB_PATH", "/data/whatsapp.db"),
+		StoreMessageContent:      envBool("WT_STORE_MESSAGE_CONTENT", true),
+		MessageRetention:         time.Duration(envInt("WT_MESSAGE_RETENTION_DAYS", 60)) * 24 * time.Hour,
+		Publisher:                strings.ToLower(env("WT_PUBLISHER", "mqtt")),
+		DiscoveryPrefix:          env("WT_DISCOVERY_PREFIX", "homeassistant"),
+		HAURL:                    strings.TrimSuffix(env("HA_URL", ""), "/"),
+		HAToken:                  env("HA_TOKEN", ""),
+		GianniEnabled:            envBool("WT_GIANNI_ENABLED", true),
+		GianniMention:            env("WT_GIANNI_MENTION", "@gianni"),
+		GiannaMention:            env("WT_GIANNA_MENTION", "@gianna"),
+		GianniTopicIn:            env("WT_GIANNI_TOPIC_IN", "gianni/inbox"),
+		GianniTopicOut:           env("WT_GIANNI_TOPIC_OUT", "gianni/outbox"),
+		GianniTopicStatus:        env("WT_GIANNI_TOPIC_STATUS", "gianni/status"),
+		GianniAckEnabled:         envBool("WT_GIANNI_ACK_ENABLED", true),
+		GianniImageMaxMB:         envInt("WT_GIANNI_IMAGE_MAX_MB", 15),
+		GianniContextEnabled:     envBool("WT_GIANNI_CONTEXT_ENABLED", true),
+		GianniContextHours:       envInt("WT_GIANNI_CONTEXT_HOURS", 48),
+		GianniContextMaxMessages: envInt("WT_GIANNI_CONTEXT_MAX_MESSAGES", 200),
+		LogLevel:                 envLevel("WT_LOG_LEVEL", slog.LevelInfo),
 		MQTT: MQTTConfig{
 			Host:     env("MQTT_HOST", ""),
 			Port:     envInt("MQTT_PORT", 1883),
@@ -157,6 +163,12 @@ func LoadConfig() (Config, error) {
 		}
 		if cfg.GianniImageMaxMB < 1 || cfg.GianniImageMaxMB > 50 {
 			return cfg, fmt.Errorf("WT_GIANNI_IMAGE_MAX_MB must be between 1 and 50")
+		}
+		if cfg.GianniContextHours < 1 || cfg.GianniContextHours > 168 {
+			return cfg, fmt.Errorf("WT_GIANNI_CONTEXT_HOURS must be between 1 and 168")
+		}
+		if cfg.GianniContextMaxMessages < 10 || cfg.GianniContextMaxMessages > 500 {
+			return cfg, fmt.Errorf("WT_GIANNI_CONTEXT_MAX_MESSAGES must be between 10 and 500")
 		}
 	}
 

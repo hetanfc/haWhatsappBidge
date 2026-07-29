@@ -127,6 +127,55 @@ func TestArchiveTracksReactionChangesAndRemoval(t *testing.T) {
 	}
 }
 
+func TestArchiveReturnsRecentConversationInChronologicalOrder(t *testing.T) {
+	a := newTestArchive(t)
+	ctx := context.Background()
+	at := time.Now()
+	a.add(ctx, archivedMessage{
+		ID: "one", At: at.Add(-3 * time.Minute), Kind: "testo",
+		Text: "prima", FromMe: false,
+	})
+	a.add(ctx, archivedMessage{
+		ID: "two", At: at.Add(-2 * time.Minute), Kind: "testo",
+		Text: "dopo", FromMe: true,
+	})
+	a.markAgentMessage(
+		ctx, "agent", at.Add(-time.Minute), "testo", "risposta di Gianna", "gianna",
+	)
+	a.markAgentMessage(
+		ctx, "ack", at.Add(-30*time.Second), "ricevuta AI", "Ricevuto", "ack",
+	)
+	a.add(ctx, archivedMessage{
+		ID: "current", At: at, Kind: "testo", Text: "@gianna perché?",
+	})
+
+	got := a.recentBefore(ctx, "current", at, time.Hour, 20, 10_000)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 context messages, got %d: %+v", len(got), got)
+	}
+	if got[0].ID != "one" || got[1].ID != "two" || got[2].ID != "agent" {
+		t.Fatalf("messages are not chronological: %+v", got)
+	}
+	if got[2].AgentSender != "gianna" {
+		t.Fatalf("agent attribution was lost: %+v", got[2])
+	}
+}
+
+func TestArchiveRecentConversationRespectsCharacterBudget(t *testing.T) {
+	a := newTestArchive(t)
+	ctx := context.Background()
+	at := time.Now()
+	a.add(ctx, archivedMessage{
+		ID: "long", At: at.Add(-time.Minute), Kind: "testo",
+		Text: "abcdefghij",
+	})
+
+	got := a.recentBefore(ctx, "current", at, time.Hour, 10, 5)
+	if len(got) != 1 || got[0].Text != "abcde" {
+		t.Fatalf("unexpected capped context: %+v", got)
+	}
+}
+
 func TestExcerptFlattensAndLimitsText(t *testing.T) {
 	got := excerpt("  una\n frase   con spazi ")
 	if got != "una frase con spazi" {

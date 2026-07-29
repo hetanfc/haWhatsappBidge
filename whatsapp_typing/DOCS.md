@@ -355,6 +355,9 @@ Il primo avvio mostra codice o QR nei log. Il DB della sessione finisce in `./da
 | `gianni_topic_status` | `WT_GIANNI_TOPIC_STATUS` | `gianni/status` | Stato retained del bridge |
 | `gianni_ack_enabled` | `WT_GIANNI_ACK_ENABLED` | `true` | Conferma immediata 👽 dopo l'inoltro |
 | `gianni_image_max_mb` | `WT_GIANNI_IMAGE_MAX_MB` | `15` | Dimensione massima delle immagini inviate |
+| `gianni_context_enabled` | `WT_GIANNI_CONTEXT_ENABLED` | `true` | Invia al bridge il contesto recente della chat |
+| `gianni_context_hours` | `WT_GIANNI_CONTEXT_HOURS` | `48` | Finestra massima dei messaggi candidati |
+| `gianni_context_max_messages` | `WT_GIANNI_CONTEXT_MAX_MESSAGES` | `200` | Numero massimo di messaggi candidati |
 | `jid_override` | `WT_JID` | vuoto | Via di fuga se il contatto arriva su un JID `@lid` |
 | `push_name` | `WT_PUSH_NAME` | `Home Assistant` | Solo se WhatsApp non ha ancora sincronizzato il tuo nome |
 | `log_level` | `WT_LOG_LEVEL` | `info` | `debug` mostra ogni evento di presence |

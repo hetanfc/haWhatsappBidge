@@ -21,6 +21,9 @@ export WT_GIANNI_TOPIC_OUT="$(bashio::config 'gianni_topic_out')"
 export WT_GIANNI_TOPIC_STATUS="$(bashio::config 'gianni_topic_status')"
 export WT_GIANNI_ACK_ENABLED="$(bashio::config 'gianni_ack_enabled')"
 export WT_GIANNI_IMAGE_MAX_MB="$(bashio::config 'gianni_image_max_mb')"
+export WT_GIANNI_CONTEXT_ENABLED="$(bashio::config 'gianni_context_enabled')"
+export WT_GIANNI_CONTEXT_HOURS="$(bashio::config 'gianni_context_hours')"
+export WT_GIANNI_CONTEXT_MAX_MESSAGES="$(bashio::config 'gianni_context_max_messages')"
 export WT_DB_PATH="/data/whatsapp.db"
 
 if bashio::config.has_value 'pair_phone'; then

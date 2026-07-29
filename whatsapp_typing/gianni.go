@@ -49,25 +49,30 @@ type gianniOutbound struct {
 }
 
 type GianniRelay struct {
-	cfg       Config
-	wa        *WhatsApp
-	mqtt      *MQTTPublisher
-	log       *slog.Logger
-	outbox    chan []byte
-	sendMu    sync.Mutex
-	sentMu    sync.Mutex
-	sentByBot map[string]time.Time
-	http      *http.Client
+	cfg         Config
+	wa          *WhatsApp
+	mqtt        *MQTTPublisher
+	log         *slog.Logger
+	outbox      chan []byte
+	sendMu      sync.Mutex
+	sentMu      sync.Mutex
+	sentByBot   map[string]time.Time
+	statusMu    sync.RWMutex
+	bridgeState string
+	bridgeMode  string
+	http        *http.Client
 }
 
 func NewGianniRelay(cfg Config, wa *WhatsApp, mqttPub *MQTTPublisher, log *slog.Logger) *GianniRelay {
 	return &GianniRelay{
-		cfg:       cfg,
-		wa:        wa,
-		mqtt:      mqttPub,
-		log:       log,
-		outbox:    make(chan []byte, 32),
-		sentByBot: make(map[string]time.Time),
+		cfg:         cfg,
+		wa:          wa,
+		mqtt:        mqttPub,
+		log:         log,
+		outbox:      make(chan []byte, 32),
+		sentByBot:   make(map[string]time.Time),
+		bridgeState: "unknown",
+		bridgeMode:  "unknown",
 		http: &http.Client{
 			Timeout: 30 * time.Second,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -96,6 +101,12 @@ func (g *GianniRelay) Start(ctx context.Context) error {
 		} else {
 			g.log.Info("Gianni relay listening", "topic", g.cfg.GianniTopicOut)
 		}
+		statusTok := cli.Subscribe(g.cfg.GianniTopicStatus, 1, func(_ mqtt.Client, msg mqtt.Message) {
+			g.updateBridgeStatus(msg.Payload())
+		})
+		if !statusTok.WaitTimeout(10*time.Second) || statusTok.Error() != nil {
+			g.log.Warn("Gianni status subscription failed", "topic", g.cfg.GianniTopicStatus)
+		}
 	}
 	g.mqtt.OnConnect(subscribe)
 	tok := g.mqtt.cli.Subscribe(g.cfg.GianniTopicOut, 1, func(_ mqtt.Client, msg mqtt.Message) {
@@ -110,6 +121,15 @@ func (g *GianniRelay) Start(ctx context.Context) error {
 	}
 	if err := tok.Error(); err != nil {
 		return fmt.Errorf("subscribe to %s: %w", g.cfg.GianniTopicOut, err)
+	}
+	statusTok := g.mqtt.cli.Subscribe(g.cfg.GianniTopicStatus, 1, func(_ mqtt.Client, msg mqtt.Message) {
+		g.updateBridgeStatus(msg.Payload())
+	})
+	if !statusTok.WaitTimeout(10 * time.Second) {
+		return fmt.Errorf("timeout subscribing to %s", g.cfg.GianniTopicStatus)
+	}
+	if err := statusTok.Error(); err != nil {
+		return fmt.Errorf("subscribe to %s: %w", g.cfg.GianniTopicStatus, err)
 	}
 	go g.run(ctx)
 	g.log.Info("AI relay enabled", "gianni_mention", g.cfg.GianniMention,
@@ -180,6 +200,58 @@ func (g *GianniRelay) Forward(evt *events.Message, text string, at time.Time) {
 		return
 	}
 	g.log.Info("message forwarded to AI bridge", "message_id", in.MessageID, "sender", senderRole)
+	if g.cfg.GianniAckEnabled {
+		go g.sendAcknowledgement(in)
+	}
+}
+
+func (g *GianniRelay) updateBridgeStatus(payload []byte) {
+	var status struct {
+		State string `json:"state"`
+		Mode  string `json:"mode"`
+	}
+	if err := json.Unmarshal(payload, &status); err != nil {
+		g.log.Warn("invalid Gianni status", "err", err)
+		return
+	}
+	g.statusMu.Lock()
+	g.bridgeState = strings.ToLower(strings.TrimSpace(status.State))
+	g.bridgeMode = strings.ToLower(strings.TrimSpace(status.Mode))
+	g.statusMu.Unlock()
+}
+
+func acknowledgementText(in gianniInbound, state, mode, gianniMention, giannaMention string) string {
+	if state == "offline" {
+		return "👽 _Ricevuto, ma GianniBridge risulta offline._"
+	}
+	if mode == "paused" {
+		return "👽 _Ricevuto, ma il bridge è in pausa._"
+	}
+	hasGianni := containsMention(in.Text, gianniMention)
+	hasGianna := containsMention(in.Text, giannaMention)
+	if hasGianni && hasGianna {
+		return "👽 _Ricevuto. Li metto a confronto._"
+	}
+	if hasGianna {
+		return "👽 _Ricevuto. Avviso Gianna._"
+	}
+	return "👽 _Ricevuto. Avviso Gianni._"
+}
+
+func (g *GianniRelay) sendAcknowledgement(in gianniInbound) {
+	g.statusMu.RLock()
+	state, mode := g.bridgeState, g.bridgeMode
+	g.statusMu.RUnlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	g.sendMu.Lock()
+	defer g.sendMu.Unlock()
+	text := acknowledgementText(
+		in, state, mode, g.cfg.GianniMention, g.cfg.GiannaMention,
+	)
+	if err := g.send(ctx, &waE2E.Message{Conversation: proto.String(text)}, "ricevuta AI"); err != nil {
+		g.log.Warn("Gianni acknowledgement failed", "err", err)
+	}
 }
 
 func (g *GianniRelay) deliver(ctx context.Context, payload []byte) error {

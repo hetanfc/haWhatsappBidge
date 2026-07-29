@@ -352,6 +352,8 @@ Il primo avvio mostra codice o QR nei log. Il DB della sessione finisce in `./da
 | `gianna_mention` | `WT_GIANNA_MENTION` | `@gianna` | Menzione di Gianna rilevata senza distinzione fra maiuscole e minuscole |
 | `gianni_topic_in` | `WT_GIANNI_TOPIC_IN` | `gianni/inbox` | Topic MQTT verso GianniBridge |
 | `gianni_topic_out` | `WT_GIANNI_TOPIC_OUT` | `gianni/outbox` | Topic MQTT delle risposte |
+| `gianni_topic_status` | `WT_GIANNI_TOPIC_STATUS` | `gianni/status` | Stato retained del bridge |
+| `gianni_ack_enabled` | `WT_GIANNI_ACK_ENABLED` | `true` | Conferma immediata 👽 dopo l'inoltro |
 | `gianni_image_max_mb` | `WT_GIANNI_IMAGE_MAX_MB` | `15` | Dimensione massima delle immagini inviate |
 | `jid_override` | `WT_JID` | vuoto | Via di fuga se il contatto arriva su un JID `@lid` |
 | `push_name` | `WT_PUSH_NAME` | `Home Assistant` | Solo se WhatsApp non ha ancora sincronizzato il tuo nome |

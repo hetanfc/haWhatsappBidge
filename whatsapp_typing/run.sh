@@ -18,6 +18,8 @@ export WT_GIANNI_MENTION="$(bashio::config 'gianni_mention')"
 export WT_GIANNA_MENTION="$(bashio::config 'gianna_mention')"
 export WT_GIANNI_TOPIC_IN="$(bashio::config 'gianni_topic_in')"
 export WT_GIANNI_TOPIC_OUT="$(bashio::config 'gianni_topic_out')"
+export WT_GIANNI_TOPIC_STATUS="$(bashio::config 'gianni_topic_status')"
+export WT_GIANNI_ACK_ENABLED="$(bashio::config 'gianni_ack_enabled')"
 export WT_GIANNI_IMAGE_MAX_MB="$(bashio::config 'gianni_image_max_mb')"
 export WT_DB_PATH="/data/whatsapp.db"
 

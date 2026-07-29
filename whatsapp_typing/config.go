@@ -41,12 +41,14 @@ type Config struct {
 	HAURL           string
 	HAToken         string
 
-	GianniEnabled    bool
-	GianniMention    string
-	GiannaMention    string
-	GianniTopicIn    string
-	GianniTopicOut   string
-	GianniImageMaxMB int
+	GianniEnabled     bool
+	GianniMention     string
+	GiannaMention     string
+	GianniTopicIn     string
+	GianniTopicOut    string
+	GianniTopicStatus string
+	GianniAckEnabled  bool
+	GianniImageMaxMB  int
 
 	LogLevel slog.Level
 }
@@ -91,6 +93,8 @@ func LoadConfig() (Config, error) {
 		GiannaMention:       env("WT_GIANNA_MENTION", "@gianna"),
 		GianniTopicIn:       env("WT_GIANNI_TOPIC_IN", "gianni/inbox"),
 		GianniTopicOut:      env("WT_GIANNI_TOPIC_OUT", "gianni/outbox"),
+		GianniTopicStatus:   env("WT_GIANNI_TOPIC_STATUS", "gianni/status"),
+		GianniAckEnabled:    envBool("WT_GIANNI_ACK_ENABLED", true),
 		GianniImageMaxMB:    envInt("WT_GIANNI_IMAGE_MAX_MB", 15),
 		LogLevel:            envLevel("WT_LOG_LEVEL", slog.LevelInfo),
 		MQTT: MQTTConfig{
@@ -145,7 +149,7 @@ func LoadConfig() (Config, error) {
 		if strings.EqualFold(cfg.GianniMention, cfg.GiannaMention) {
 			return cfg, fmt.Errorf("Gianni and Gianna mentions must differ")
 		}
-		if cfg.GianniTopicIn == "" || cfg.GianniTopicOut == "" {
+		if cfg.GianniTopicIn == "" || cfg.GianniTopicOut == "" || cfg.GianniTopicStatus == "" {
 			return cfg, fmt.Errorf("Gianni MQTT topics cannot be empty")
 		}
 		if cfg.GianniTopicIn == cfg.GianniTopicOut {

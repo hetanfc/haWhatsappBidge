@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.10.0
+
+- Conferma immediata WhatsApp con 👽 quando una richiesta per Gianni o Gianna viene inoltrata.
+- La conferma distingue richieste singole, dialoghi fra agenti, bridge in pausa e bridge offline.
+- Aggiunta la sottoscrizione al topic `gianni/status`.
+
 ## 1.9.0
 
 - Aggiunto `binary_sensor.<contatto>_mark_online`, che espone in Home Assistant il valore

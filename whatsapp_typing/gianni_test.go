@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestContainsMentionAnywhere(t *testing.T) {
 	tests := []struct {
@@ -47,5 +50,31 @@ func TestTrustedAgentSender(t *testing.T) {
 		if isTrustedAgentSender(sender) {
 			t.Errorf("expected %q to be rejected", sender)
 		}
+	}
+}
+
+func TestAcknowledgementText(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  string
+		state string
+		mode  string
+		want  string
+	}{
+		{"gianni", "@gianni ciao", "online", "running", "Avviso Gianni"},
+		{"gianna", "@gianna ciao", "online", "running", "Avviso Gianna"},
+		{"entrambi", "@gianni @gianna parlate", "online", "running", "metto a confronto"},
+		{"pausa", "@gianni ciao", "online", "paused", "bridge è in pausa"},
+		{"offline", "@gianni ciao", "offline", "running", "risulta offline"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := acknowledgementText(
+				gianniInbound{Text: tt.text}, tt.state, tt.mode, "@gianni", "@gianna",
+			)
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("acknowledgementText() = %q, want substring %q", got, tt.want)
+			}
+		})
 	}
 }

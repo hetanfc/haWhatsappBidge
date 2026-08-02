@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.12.1
+
+- Aggiunto il pulsante Indietro nell'archivio per tornare alla schermata precedente di Home Assistant.
+
 ## 1.12.0
 
 - Aggiunta l'interfaccia web Ingress "Archivio WhatsApp" direttamente nella pagina dell'add-on.

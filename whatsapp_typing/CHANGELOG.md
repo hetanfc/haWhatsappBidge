@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.12.2
+
+- Rimossi nomi ed esempi personali residui dal codice e dalla documentazione pubblica.
+
 ## 1.12.1
 
 - Aggiunto il pulsante Indietro nell'archivio per tornare alla schermata precedente di Home Assistant.
@@ -15,7 +19,7 @@
 
 - Aggiunge alle richieste per Gianni e Gianna il contesto recente della chat autorizzata,
   recuperato dall'archivio locale già esistente.
-- Conserva autore, orario e risposta citata; distingue Proprietario, Contatto, Gianni e Gianna ed
+- Conserva autore, orario e risposta citata; distingue proprietario, contatto, Gianni e Gianna ed
   esclude le conferme automatiche `Ricevuto`.
 - Introduce opzioni per abilitazione, finestra temporale e numero massimo di messaggi
   candidati. Il bridge seleziona poi soltanto quelli realmente pertinenti.

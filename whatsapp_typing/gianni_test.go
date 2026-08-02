@@ -11,7 +11,7 @@ func TestContainsMentionAnywhere(t *testing.T) {
 		want bool
 	}{
 		{"@gianni dove sono?", true},
-		{"Che tempo farÃ  domani, @gianni?", true},
+		{"Che tempo farà domani, @gianni?", true},
 		{"Ehi @GIANNI, rispondi", true},
 		{"gianni senza chiocciola", false},
 		{"un messaggio normale", false},

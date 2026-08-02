@@ -14,7 +14,7 @@ I due agenti usano lo stesso relay MQTT, ma GianniBridge mantiene identità, sti
 Claude e memoria automatica separati. Per esempio:
 
 ```text
-Che tempo farÃ  domani, @gianni?
+Che tempo farà domani, @gianni?
 @gianni controlla la lista della spesa
 Puoi accendere la luce, @gianni?
 @gianna riassumi gli ultimi eventi

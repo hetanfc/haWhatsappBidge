@@ -12,7 +12,7 @@ ARG BUILD_VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-COPY *.go ./
+COPY *.go web_ui.html ./
 RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X main.version=${BUILD_VERSION}" -o /out/whatsapp-typing .
 

@@ -40,6 +40,8 @@ func main() {
 		log.Error("whatsapp setup failed", "err", err)
 		os.Exit(1)
 	}
+	archiveWeb := NewArchiveWeb(wa.db, cfg.Name, log)
+	archiveWeb.Start(ctx, ":8099")
 	if cfg.GianniEnabled {
 		mqttPub, ok := pub.(*MQTTPublisher)
 		if !ok {

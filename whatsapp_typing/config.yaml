@@ -1,6 +1,6 @@
 ---
 name: WhatsApp Typing Sensor
-version: "1.11.0"
+version: "1.12.0"
 slug: whatsapp_typing
 description: "Attività WhatsApp di un contatto: typing, presenza, reazioni, modifiche, eliminazioni e spunte"
 url: https://github.com/hetanfc/haWhatsappBidge
@@ -12,6 +12,10 @@ init: false
 boot: auto
 startup: application
 homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:message-text-clock
+panel_title: Archivio WhatsApp
 services:
   - mqtt:want
 options:

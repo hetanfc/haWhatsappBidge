@@ -116,6 +116,14 @@ L'attributo `timeline` contiene le ultime **50** voci già scritte in italiano. 
 La lista sta in memoria: un riavvio dell'add-on la azzera. La cronologia vera e propria resta
 comunque in Home Assistant, che conserva i cambi di stato per i giorni configurati nel recorder.
 
+### Archivio completo nell'interfaccia web
+
+La pagina dell'add-on espone il pulsante **Apri interfaccia web**. L'archivio mostra direttamente
+i messaggi conservati in `/data/whatsapp.db`, senza il limite di 100 caratteri della timeline.
+Si possono cercare parole nel testo completo e filtrare messaggi ricevuti, inviati, cancellati o
+modificati. Per questi ultimi sono disponibili anche le versioni precedenti. La pagina passa
+attraverso Ingress ed è quindi protetta dalla sessione di Home Assistant; non apre porte esterne.
+
 ## Reazioni, risposte, modifiche ed eliminazioni
 
 WhatsApp invia queste azioni indicando l'ID del messaggio bersaglio. L'add-on mantiene quindi

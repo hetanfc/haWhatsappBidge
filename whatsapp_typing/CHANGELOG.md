@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.12.0
+
+- Aggiunta l'interfaccia web Ingress "Archivio WhatsApp" direttamente nella pagina dell'add-on.
+- Visualizzazione senza tagli del testo completo dei messaggi ricevuti e inviati.
+- Aggiunti ricerca e filtri per messaggi cancellati, modificati, ricevuti e inviati.
+- Le modifiche mostrano anche tutte le versioni precedenti conservate nel database.
+
 ## 1.11.0
 
 - Aggiunge alle richieste per Gianni e Gianna il contesto recente della chat autorizzata,

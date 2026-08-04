@@ -66,6 +66,17 @@ func newMessageArchive(ctx context.Context, db *sql.DB, log logger, retention ti
 			emoji     TEXT NOT NULL,
 			at        INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS wt_web_sends (
+			request_id TEXT PRIMARY KEY,
+			target_jid TEXT NOT NULL,
+			target_name TEXT NOT NULL,
+			text TEXT NOT NULL,
+			status TEXT NOT NULL,
+			message_id TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			sent_at INTEGER NOT NULL DEFAULT 0
+		)`,
 	}
 	for _, q := range schema {
 		if _, err := db.ExecContext(ctx, q); err != nil {

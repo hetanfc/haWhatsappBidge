@@ -124,6 +124,12 @@ Si possono cercare parole nel testo completo e filtrare messaggi ricevuti, invia
 modificati. Per questi ultimi sono disponibili anche le versioni precedenti. La pagina passa
 attraverso Ingress ed è quindi protetta dalla sessione di Home Assistant; non apre porte esterne.
 
+Nella stessa pagina è disponibile **Invia un messaggio al gruppo**. L'elenco viene letto in tempo
+reale dall'account WhatsApp collegato: nomi e JID dei gruppi non vengono inseriti nel codice o nel
+repository. Prima dell'invio la pagina mostra una conferma con destinatario e testo completo. Ogni
+richiesta ha un ID univoco registrato nel database, quindi la stessa richiesta non può essere
+eseguita due volte. In caso di errore o timeout bisogna controllare WhatsApp prima di riprovare.
+
 ## Reazioni, risposte, modifiche ed eliminazioni
 
 WhatsApp invia queste azioni indicando l'ID del messaggio bersaglio. L'add-on mantiene quindi

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.13.0
+
+- Aggiunto l'invio manuale di un singolo messaggio ai gruppi WhatsApp dalla pagina Ingress.
+- I gruppi sono caricati dall'account collegato e non vengono salvati nel repository.
+- Ogni richiesta viene registrata con un ID univoco per impedire invii duplicati.
+- Il destinatario e il testo completo devono essere confermati prima dell'invio.
+
 ## 1.12.2
 
 - Rimossi nomi ed esempi personali residui dal codice e dalla documentazione pubblica.
